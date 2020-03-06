@@ -4,17 +4,19 @@
 
 Vagrant.configure(2) do |config|
 
-    config.vm.define "rtr1" do |node|
-      node.vm.box =  "IOS-XRv"
+    config.vm.define "rtr_client" do |node|
+      node.vm.box =  "IOS-XRv6.6.3"
 
-      # gig0/0/0/0 connected to link2, gig00/0/1 connected to link1, gig0/0/0/2 connected to link3, auto-config not supported.
+      # auto-config not supported
 
-      node.vm.network :private_network, virtualbox__intnet: "link2", auto_config: false
       node.vm.network :private_network, virtualbox__intnet: "link1", auto_config: false
-      node.vm.network :private_network, virtualbox__intnet: "link3", auto_config: false 
-      #Source a config file and apply it to XR
+      node.vm.network :private_network, virtualbox__intnet: "link2", auto_config: false
+      node.vm.network :private_network, virtualbox__intnet: "link3", auto_config: false
 
-      node.vm.provision "file", source: "configs/rtr_speaker", destination: "/home/vagrant/rtr_config"
+      node.vm.provision "file", source: "configs/rtr_client", destination: "/home/vagrant/rtr_config"
+      node.vm.provision "file", source: "../bgpfs2acl.py", destination: "/home/vagrant/bgpfs2acl.py"
+      node.vm.provision "file", source: "../func_lib.py", destination: "/home/vagrant/func_lib.py"
+
 
       node.vm.provision "shell" do |s|
           s.path =  "scripts/apply_config.sh"
@@ -24,24 +26,31 @@ Vagrant.configure(2) do |config|
       node.vm.provider "virtualbox" do |v|
          v.memory = 5120
       end
+
     end
 
-    config.vm.define "rtr2" do |node|
-      node.vm.box =  "IOS-XRv"
+    config.vm.define "rtr_speaker" do |node|
+      node.vm.box =  "IOS-XRv6.6.3"
 
-      # gig0/0/0/0 connected to link1, gig0/0/0/1 connected to link3, auto-config not supported
+      # auto-config not supported.
 
       node.vm.network :private_network, virtualbox__intnet: "link1", auto_config: false
+      node.vm.network :private_network, virtualbox__intnet: "link2", auto_config: false
       node.vm.network :private_network, virtualbox__intnet: "link3", auto_config: false
-
+      node.vm.network :private_network, virtualbox__intnet: "link6", auto_config: false
+      #Source a config file and apply it to XR
+      node.vm.provision "file", source: "configs/rtr_speaker", destination: "/home/vagrant/rtr_config"
+      node.vm.provision "shell" do |s|
+          s.path =  "scripts/apply_config.sh"
+          s.args = ["/home/vagrant/rtr_config"]
+      end
+      node.vm.provider "virtualbox" do |v|
+         v.memory = 5120
+      end
     end
-
 
     config.vm.define "devbox" do |node|
       node.vm.box =  "ubuntu/trusty64"
-
-      # eth1 connected to link2, auto_config is supported for an ubuntu instance 
-      node.vm.network :private_network, virtualbox__intnet: "link2", ip: "11.1.1.2"
-
+      node.vm.network :private_network, virtualbox__intnet: "link6", ip: "60.1.1.2"
     end
 end

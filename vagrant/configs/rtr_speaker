@@ -1,7 +1,263 @@
 !! XR configuration
 !
+hostname rtr_speaker
+
 interface GigabitEthernet0/0/0/0
-ip address 11.1.1.10/24
+ip address 11.1.1.20/24
 no shutdown
 !
+
+
+
+!
+class-map type traffic match-all DNS
+ match destination-address ipv4 7.7.7.7 255.255.255.255
+ match protocol udp
+ match source-port 53
+ match packet length 768-65535
+ end-class-map
+!
+class-map type traffic match-all NTP
+ match destination-address ipv4 7.7.7.7 255.255.255.255
+ match protocol udp
+ match source-port 123
+ match packet length 1-35 37-45 47-75 77-219 221-65535
+ end-class-map
+!
+class-map type traffic match-all RIP
+ match destination-address ipv4 7.7.7.7 255.255.255.255
+ match protocol udp
+ match source-port 520
+ end-class-map
+!
+class-map type traffic match-all FRAG
+ match destination-address ipv4 7.7.7.7 255.255.255.255
+ match protocol udp
+ match fragment-type  is-fragment
+ end-class-map
+!
+class-map type traffic match-all L2TP
+ match destination-address ipv4 7.7.7.7 255.255.255.255
+ match protocol udp
+ match source-port 1701
+ match packet length 500-65535
+ end-class-map
+!
+class-map type traffic match-all LDAP
+ match destination-address ipv4 7.7.7.7 255.255.255.255
+ match protocol udp
+ match source-port 389
+ end-class-map
+!
+class-map type traffic match-all MDNS
+ match destination-address ipv4 7.7.7.7 255.255.255.255
+ match protocol udp
+ match source-port 5353
+ end-class-map
+!
+class-map type traffic match-all SNMP
+ match destination-address ipv4 7.7.7.7 255.255.255.255
+ match protocol udp
+ match source-port 161-162
+ end-class-map
+!
+class-map type traffic match-all SSDP
+ match destination-address ipv4 7.7.7.7 255.255.255.255
+ match protocol udp
+ match source-port 1900
+ end-class-map
+!
+class-map type traffic match-all MSSQL
+ match destination-address ipv4 7.7.7.7 255.255.255.255
+ match protocol udp
+ match source-port 1434
+ end-class-map
+!
+class-map type traffic match-all PAIR1
+ match destination-address ipv4 192.168.1.1 255.255.255.255
+ match source-address ipv4 10.0.0.1 255.255.255.255
+ end-class-map
+!
+class-map type traffic match-all PAIR2
+ match destination-address ipv4 192.168.1.1 255.255.255.255
+ match source-address ipv4 10.0.0.2 255.255.255.255
+ match protocol udp
+ end-class-map
+!
+class-map type traffic match-all PAIR3
+ match destination-address ipv4 192.168.1.1 255.255.255.255
+ match source-address ipv4 10.0.0.3 255.255.255.255
+ match protocol udp
+ match source-port 1121
+ match destination-port 1024-60000
+ end-class-map
+!
+class-map type traffic match-all ONCRPC
+ match destination-address ipv4 7.7.7.7 255.255.255.255
+ match protocol udp
+ match source-port 111
+ end-class-map
+!
+class-map type traffic match-all CHARGEN
+ match destination-address ipv4 7.7.7.7 255.255.255.255
+ match protocol udp
+ match source-port 19
+ end-class-map
+!
+class-map type traffic match-all NETBIOS
+ match destination-address ipv4 7.7.7.7 255.255.255.255
+ match protocol udp
+ match source-port 137-138
+ end-class-map
+!
+class-map type traffic match-all MEMCACHED
+ match destination-address ipv4 7.7.7.7 255.255.255.255
+ match protocol udp
+ match source-port 11211
+ end-class-map
+!
+class-map type traffic match-all match-full
+ match destination-address ipv4 30.1.1.1 255.255.255.255
+ match protocol tcp
+ match source-port 22
+ match destination-port 56 60-65
+ end-class-map
+!
+class-map type traffic match-all match-UDP53
+ match destination-port 53
+ match protocol udp
+ end-class-map
+!
+class-map type traffic match-all COMPLEX-FRAG
+ match destination-address ipv4 70.2.1.1 255.255.255.255
+ match source-address ipv4 80.2.1.1 255.255.255.255
+ match packet length 700
+ match fragment-type  is-fragment
+ end-class-map
+!
+class-map type traffic match-all COMPLEX-ICMP-IGNORED
+ match destination-address ipv4 70.2.1.1 255.255.255.255
+ match source-address ipv4 80.2.1.1 255.255.255.255
+ match dscp af21
+ match ipv4 icmp-type 3
+ match ipv4 icmp-code 2
+ end-class-map
+!
+class-map type traffic match-all scale_ipv4_icmp_group1_1
+ match destination-address ipv4 70.2.1.1 255.255.255.255
+ end-class-map
+!
+policy-map type pbr FS
+ class type traffic match-UDP53
+  drop
+ !
+ class type traffic match-full
+  drop
+ !
+ class type traffic scale_ipv4_icmp_group1_1
+  drop
+ !
+ class type traffic class-default
+ !
+ class type traffic COMPLEX-FRAG
+  drop
+ !
+ class type traffic COMPLEX-ICMP-IGNORED
+  police rate 1 mbps
+  !
+  set dscp cs2
+ !
+ class type traffic NETBIOS
+  drop
+ !
+ class type traffic SNMP
+  drop
+ !
+ class type traffic CHARGEN
+  drop
+ !
+ class type traffic RIP
+  drop
+ !
+ class type traffic MDNS
+  drop
+ !
+ class type traffic MSSQL
+  drop
+ !
+ class type traffic MEMCACHED
+  drop
+ !
+ class type traffic SSDP
+  drop
+ !
+ class type traffic ONCRPC
+  drop
+ !
+ class type traffic NTP
+  drop
+ !
+ class type traffic LDAP
+  drop
+ !
+ class type traffic FRAG
+  drop
+ !
+ class type traffic L2TP
+  drop
+ !
+ class type traffic PAIR1
+  drop
+ !
+ class type traffic PAIR2
+  drop
+ !
+ class type traffic PAIR3
+  drop
+ !
+ class type traffic class-default
+ !
+ end-policy-map
+!
+sampler-map SAM-MAP
+ random 1 out-of 1000
+!
+! RedPine --- X == 2
+!
+route-policy DROP-ALL
+  drop
+end-policy
+!
+route-policy PASS-ALL
+  pass
+end-policy
+ !
+!
+router bgp 65000
+ bgp router-id 11.1.1.20
+ address-family ipv4 unicast
+  network 192.0.2.0/24
+ !
+ address-family ipv4 flowspec
+ !
+ neighbor 11.1.1.10
+  remote-as 65000
+  address-family ipv4 unicast
+  !
+  address-family ipv4 flowspec
+   route-policy PASS-ALL in
+   route-policy PASS-ALL out
+  !
+ !
+!
+netconf-yang agent
+ ssh
+!
+flowspec
+ address-family ipv4
+  service-policy type pbr FS
+  service-policy type pbr TEST
+ !
+
+
 end
