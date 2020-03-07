@@ -2,15 +2,15 @@
 import argparse
 
 import sys
-import tempfile
 import threading
 from pprint import pprint
-from func_lib import parse_range, write_config
+from func_lib import parse_range, write_config, interface_handler
 
 sys.path.append("/pkg/bin/")
 
 # noinspection PyUnresolvedReferences
 from ztp_helper import ZtpHelpers
+
 SYSLOG_SERVER = "11.11.11.2"
 SYSLOG_PORT = 514
 SYSLOG_LOCAL_FILE = "/root/ztp_python.log"
@@ -34,7 +34,6 @@ def parse_flowspec_rules_ipv4(rules):
 
 def constructed_acl(fs_rules):
     start_sequence = 10010
-    # acl = ["ipv4 access-list bgp-fs2acl-ipv4"]
     alternator = 0
 
     # ICMP_code with ICMP_type migration
@@ -188,8 +187,8 @@ def constructed_acl(fs_rules):
         # print l
         applied_config += '\n' + l
 
-    # print applied_config[46:]
     applied_config += '\n'
+    applied_config += '100999 permit any\n'
     # applied_config += """interface HundredGigE0/0/1/0
     #  ipv4 access-group bgp-fs2acl-ipv4 ingress
     #  !"""
@@ -202,7 +201,12 @@ def constructed_acl(fs_rules):
     #     result = ztp_script.xrapply(f.name)
     #     print result['status']
     #     f.close()
+    interaces_to_apply = get_interfaces()['apply_ACLs']
 
+    for intf in interaces_to_apply:
+        applied_config += intf + '\n'
+        applied_config += 'ipv4 access-group {0} ingress \n'.format(default_acl_name)
+    print applied_config
     write_config(applied_config, ztp_script)
     ztp_script.syslogger.info("Config was applied on the device")
 
@@ -225,7 +229,10 @@ def conv_initiate():
 
 
 def get_interfaces():
-    pprint(ztp_script.xrcmd({"exec_cmd": "sh ip in brie"}))
+    ztp_script.syslogger.info("Parsing Interfaces ")
+
+    pprint(ztp_script.xrcmd({"exec_cmd": r"sh running interface | begin \"Gig|Ten|Twe|Fo|Hu\""}))
+    return interface_handler(ztp_script.xrcmd({"exec_cmd": r"sh running interface | begin \"Gig|Ten|Twe|Fo|Hu\""})['output'])
 
 
 def clean_script_actions():
@@ -264,21 +271,5 @@ if __name__ == "__main__":
 
     frequency = int(args.frequency)
     default_acl_name = str(args.default_acl_name)
+    # sys.exit()
     conv_initiate()
-
-    inp = """
-    AFI: IPv4
-      Flow           :Dest:30.1.1.1/32,Proto:=6,DPort:=56|>=60&<=65,SPort:=22
-        Actions      :Traffic-rate: 0 bps  (policy.1.FS.match-full)
-      Flow           :Dest:70.2.1 .1/32
-        Actions      :Traffic-rate: 0 bps  (policy.1.FS.scale_ipv4_icmp_group1_1)
-      Flow           :Proto:=17,DPort:=53
-        Actions      :Traffic-rate: 0 bps  (policy.1.FS.match-UDP53)
-    """
-
-    acl_template = """
-    ipv4 access-list bgp-fs2acl-ipv4
-     10 deny tcp host 10.10.10.10 host 11.11.11.11 eq 32
-     11 deny udp any any port-group dport1
-     21 remark Updated on 1/1/1 8.59
-     """
