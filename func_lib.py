@@ -1,14 +1,12 @@
 import pprint
-import tempfile
 
 
-def write_config(cfg_entry, ztp_script):
-    with tempfile.NamedTemporaryFile(delete=True) as f:
-        f.write("%s" % cfg_entry)
-        f.flush()
-        f.seek(0)
-        result = ztp_script.xrapply(f.name)
-        f.close()
+class XRExecError(StandardError):
+    pass
+
+
+def write_config(ssh_client, cfg_entry):
+    result = ssh_client.xrapply_string(cfg_entry)
     print 'Result {0}'.format(result)
     return result['status']
 

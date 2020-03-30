@@ -1,38 +1,150 @@
 #!/usr/bin/env python
+from __future__ import print_function
+
 import argparse
+import os
+import re
 
 import sys
 import threading
 from pprint import pprint
-from func_lib import parse_range, write_config, interface_handler
 
-sys.path.append("/pkg/bin/")
+import paramiko
 
-# noinspection PyUnresolvedReferences
-from ztp_helper import ZtpHelpers
+from func_lib import parse_range, write_config, interface_handler, XRExecError
 
-SYSLOG_SERVER = "11.11.11.2"
-SYSLOG_PORT = 514
-SYSLOG_LOCAL_FILE = "/root/ztp_python.log"
+import logging
+
+LOG_LOCAL_FILE = ''.join([os.curdir, "bgpfs2acl.log"])
+
+logging.basicConfig(
+    filename=LOG_LOCAL_FILE,
+    level=logging.DEBUG,
+    format='%(asctime)s | %(levelname)s | %(message)s'
+)
+
+console = logging.StreamHandler()
+console.setLevel(logging.INFO)
+formatter = logging.Formatter('%(name)s: %(levelname)s %(message)s')
+console.setFormatter(formatter)
+logging.getLogger('').addHandler(console)
+
+STATUS_ERROR = 'error'
+STATUS_SUCCESS = 'success'
+
+
+class XRCmdClient:
+    def __init__(self, host, port, user, password):
+        self.host = host
+        self.port = port
+        self.password = password
+        self.ssh = paramiko.SSHClient()
+        self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        self.ssh.connect(host, username=user, password=password, port=port)
+        channel = self.ssh.invoke_shell()
+        self.stdin = channel.makefile('wb')
+        self.stdout = channel.makefile('r')
+        ready_msg = 'connected succesfully'
+        self.stdin.write('echo {}\n'.format(ready_msg))
+        for line in self.stdout:
+            if line.startswith(ready_msg):
+                break
+
+    def __del__(self):
+        self.ssh.close()
+
+    @staticmethod
+    def _print_exec_out(cmd, out_buf, err_buf, exit_status):
+        logging.info('command executed: {}'.format(cmd))
+        if out_buf:
+            logging.info('STDOUT:')
+            for line in out_buf:
+                logging.info(line)
+            logging.info('end of STDOUT')
+        if err_buf:
+            logging.info('STDERR:')
+            for line in err_buf:
+                logging.error(line)
+            logging.info('end of STDERR')
+
+        logging.info('finished with exit status: {}'.format(exit_status))
+
+    def _exec_xr_func(self, xr_func, xr_arg):
+        xr_arg = xr_arg.strip('\n')
+        cmd = 'sudo su - root -c "source /pkg/bin/ztp_helper.sh && {func} \'{arg}\'"'.format(func=xr_func, arg=xr_arg)
+        self.stdin.write(''.join([cmd, '\n']))
+        finish = 'end of stdOUT buffer. finished with exit status'
+        echo_cmd = 'echo {} $?'.format(finish)
+        self.stdin.write(echo_cmd + '\n')
+        self.stdin.flush()
+
+        shout = []
+        sherr = []
+        exit_status = 0
+        for line in self.stdout:
+            if str(line).startswith(cmd) or str(line).startswith(echo_cmd):
+                # up for now filled with shell junk from stdin
+                shout = []
+            elif str(line).startswith(finish):
+                # our finish command ends with the exit status
+                exit_status = int(str(line).rsplit(None, 1)[1])
+                if exit_status:
+                    # stderr is combined with stdout.
+                    # thus, swap sherr with shout in a case of failure.
+                    sherr = shout
+                    shout = []
+                break
+            elif line.isspace():
+                continue
+            else:
+                # get rid of 'coloring and formatting' special characters
+                shout.append(re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]').sub('', line).
+                             replace('\b', '').replace('\r', ''))
+
+        # first and last lines of shout/sherr contain a prompt
+        if shout and echo_cmd in shout[-1]:
+            shout.pop()
+        if shout and cmd in shout[0]:
+            shout.pop(0)
+        if sherr and echo_cmd in sherr[-1]:
+            sherr.pop()
+        if sherr and cmd in sherr[0]:
+            sherr.pop(0)
+
+        self._print_exec_out(cmd=cmd, out_buf=shout, err_buf=sherr, exit_status=exit_status)
+        return shout, sherr, exit_status
+
+    def xrcmd(self, cmd):
+        output, err_output, status = self._exec_xr_func('xrcmd', cmd)
+        if status:
+            return {"status": STATUS_ERROR, "output": err_output}
+        return {"status": STATUS_SUCCESS, "output": output}
+
+    def xrapply_string(self, cmd):
+        output, err_output, status = self._exec_xr_func('xrapply_string', cmd)
+        if status:
+            return {"status": STATUS_ERROR, "output": err_output}
+        return {"status": STATUS_SUCCESS, "output": output}
 
 
 def parse_flowspec_rules_ipv4(rules):
     fs_dict = {}
 
-    print '*' * 10
+    print('*' * 10)
     k = 0
 
     for i in range(0, len(rules), 2):
         if 'Traffic-rate: 0 bps' in rules[i + 1]:
             fs_dict[k] = rules[i].split(',')
-            fs_dict[k][0] = fs_dict[k][0][rules[i].split(',')[0].find(':') + 1:]
+            fs_dict[k][0] = fs_dict[k][0][fs_dict[k][0].find(':') + 1:]
             k += 1
     pprint(fs_dict)
 
     return fs_dict
 
 
-def constructed_acl(fs_rules):
+def constructed_acl(fs_rules, xr_client):
     start_sequence = 10010
     alternator = 0
 
@@ -71,6 +183,7 @@ def constructed_acl(fs_rules):
             'icmp': ''
         }
         for sub_part in fs_rules[i]:
+            sub_part = sub_part.rstrip('\n')
             if 'Proto' in sub_part:
                 ace_entry['Protocol'] = ' ' + sub_part[sub_part.find('=') + 1:]
 
@@ -163,7 +276,7 @@ def constructed_acl(fs_rules):
                        ace_entry['SourceIP'] + ace_entry['SourcePort'] + \
                        ace_entry['DestIP'] + range_dport[n] + \
                        ace_entry['packet-length'] + ace_entry['icmp']
-                print ace
+                print(ace)
                 acl.append(ace)
             range_dport = []
 
@@ -201,14 +314,14 @@ def constructed_acl(fs_rules):
     #     result = ztp_script.xrapply(f.name)
     #     print result['status']
     #     f.close()
-    interaces_to_apply = get_interfaces()['apply_ACLs']
+    interfaces_to_apply = get_interfaces(xr_client)['apply_ACLs']
 
-    for intf in interaces_to_apply:
+    for intf in interfaces_to_apply:
         applied_config += intf + '\n'
         applied_config += 'ipv4 access-group {0} ingress \n'.format(default_acl_name)
-    print applied_config
-    write_config(applied_config, ztp_script)
-    ztp_script.syslogger.info("Config was applied on the device")
+    logging.info(applied_config)
+    write_config(xr_client, applied_config)
+    logging.info("Config was applied on the device")
 
 
 def parse_interfaces(interfaces_with_acls):
@@ -216,41 +329,59 @@ def parse_interfaces(interfaces_with_acls):
     pass
 
 
-def conv_initiate():
-    threading.Timer(frequency, conv_initiate).start()
-    flowspec_ipv4 = ztp_script.xrcmd({"exec_cmd": "sh flowspec ipv4"})
-    interfaces_with_acls = ztp_script.xrcmd({"exec_cmd": "sh running interface | begin 'Hu'"})
-    parse_interfaces(interfaces_with_acls['output'])
+def filter_interfaces(interfaces, regexp):
+    """Filter the list of interfaces by matching the regular expression."""
+
+    filtered_interfaces = []
+    pat = re.compile(r'{}'.format(regexp))
+
+    for i, line in enumerate(interfaces):
+        if pat.match(line):
+            filtered_interfaces.append(line)
+            j = i + 1
+            while j < len(interfaces) and not interfaces[j].startswith('interface '):
+                filtered_interfaces.append(interfaces[j])
+                j += 1
+    return filtered_interfaces
+
+
+def conv_initiate(xr_client):
+    # threading.Timer(frequency, conv_initiate).start()
+    flowspec_ipv4 = xr_client.xrcmd("sh flowspec ipv4")
+    if flowspec_ipv4['status'] == STATUS_ERROR:
+        raise XRExecError(flowspec_ipv4['output'])
+
+    interfaces = xr_client.xrcmd("sh running interface")
+    if interfaces['status'] == STATUS_ERROR:
+        raise XRExecError(interfaces['output'])
+    filtered_interfaces = filter_interfaces(interfaces['output'], '^Hu.*')
+    parse_interfaces(filtered_interfaces)
     if len(flowspec_ipv4) > 1:
         pprint(flowspec_ipv4['output'])
         print(" ")
         parsed_fs = parse_flowspec_rules_ipv4(flowspec_ipv4['output'][1:])
-        constructed_acl(parsed_fs)
+        constructed_acl(parsed_fs, xr_client)
 
 
-def get_interfaces():
-    ztp_script.syslogger.info("Parsing Interfaces ")
+def get_interfaces(xr_client):
+    logging.info("Parsing Interfaces ")
+    interfaces = xr_client.xrcmd("sh running interface")['output']
+    filtered_interfaces = filter_interfaces(interfaces, '^interface (Gig|Ten|Twe|Fo|Hu).*')
+    logging.info(filtered_interfaces)
+    return interface_handler(filtered_interfaces)
 
-    pprint(ztp_script.xrcmd({"exec_cmd": r"sh running interface | begin \"Gig|Ten|Twe|Fo|Hu\""}))
-    return interface_handler(ztp_script.xrcmd({"exec_cmd": r"sh running interface | begin \"Gig|Ten|Twe|Fo|Hu\""})['output'])
 
-
-def clean_script_actions():
-    applied_config = """
-    conf t
-    no ipv4 access-list bgpfs2acl-ipv4
-    commit
-    !
-    ztp terminate noprompt"""
-    write_config(applied_config, ztp_script)
-    ztp_script.syslogger.info("###### Script execution was complete ######")
+def clean_script_actions(ssh_client):
+    applied_config = "no ipv4 access-list bgpfs2acl-ipv4"
+    write_config(ssh_client, applied_config)
+    print("###### Script execution was complete ######")
 
     sys.exit('Terminating script')
 
 
 if __name__ == "__main__":
-    ztp_script = ZtpHelpers(syslog_file=SYSLOG_LOCAL_FILE, syslog_server=SYSLOG_SERVER, syslog_port=SYSLOG_PORT)
-    ztp_script.syslogger.info("###### Starting BGPFS2ACL RUN on XR based device ######")
+    # TODO: output to a logfile
+    print("###### Starting BGPFS2ACL RUN on XR based device ######")
 
     parser = argparse.ArgumentParser(description='BGP FlowSpec to ACL converter')
     parser.add_argument("-v", "--verbose", action="store_true",
@@ -266,10 +397,13 @@ if __name__ == "__main__":
     # Todo add verbose story;
 
     args = parser.parse_args()
+
+    xr_cmd_client = XRCmdClient('10.30.111.177', '57722', 'qazqaz', 'qazswxde')
+
     if args.revert:
-        clean_script_actions()
+        clean_script_actions(xr_cmd_client)
 
     frequency = int(args.frequency)
     default_acl_name = str(args.default_acl_name)
     # sys.exit()
-    conv_initiate()
+    conv_initiate(xr_cmd_client)

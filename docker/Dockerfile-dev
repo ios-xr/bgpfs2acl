@@ -1,0 +1,16 @@
+FROM python:2.7.17-alpine3.11
+
+RUN apk add --no-cache python2-dev \
+                       iproute2 \
+                       openssh \
+                       bash \
+                       bash-completion
+
+WORKDIR /usr/src/app
+
+COPY . .
+
+
+
+
+
