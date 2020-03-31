@@ -5,6 +5,26 @@ class XRExecError(StandardError):
     pass
 
 
+def is_subnet(ip_address):
+    ip_address = ip_address.strip()
+    net_address, net_mask = ip_address.split('/')
+    if not net_mask.isdigit() or int(net_mask) >= 32:
+        return False
+
+    net_mask = int(net_mask)
+    net_addr_bin = ''.join([bin(int(x)+256)[3:] for x in net_address.split('.')])
+    suffix_len = 32 - net_mask
+
+    if not net_addr_bin[net_mask:] == '0'*suffix_len:
+        return False
+
+    return True
+
+
+
+
+
+
 def write_config(ssh_client, cfg_entry):
     result = ssh_client.xrapply_string(cfg_entry)
     print 'Result {0}'.format(result)

@@ -11,7 +11,7 @@ from pprint import pprint
 
 import paramiko
 
-from func_lib import parse_range, write_config, interface_handler, XRExecError
+from func_lib import parse_range, write_config, interface_handler, XRExecError, is_subnet
 
 import logging
 
@@ -183,12 +183,15 @@ def constructed_acl(fs_rules, xr_client):
             'icmp': ''
         }
         for sub_part in fs_rules[i]:
-            sub_part = sub_part.rstrip('\n')
+            sub_part = sub_part.strip('\n')
             if 'Proto' in sub_part:
                 ace_entry['Protocol'] = ' ' + sub_part[sub_part.find('=') + 1:]
 
             if 'Source' in sub_part:
                 ace_entry['SourceIP'] = ' ' + sub_part[sub_part.find(':') + 1:]
+                if is_subnet(ace_entry['SourceIP']):
+                    ace_entry['DestIP'] = ''
+                    break
 
             if 'SPort' in sub_part:
                 ace_entry['SourcePort'] = sub_part[sub_part.find(':') + 1:]
