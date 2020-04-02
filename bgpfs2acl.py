@@ -1,33 +1,22 @@
 #!/usr/bin/env python
 from __future__ import print_function
-
 import argparse
 import os
 import re
 
 import sys
 import threading
-from pprint import pprint
+from pprint import pprint, pformat
 
 import paramiko
 
-from func_lib import parse_range, write_config, interface_handler, XRExecError, is_subnet
+from func_lib import parse_range, interface_handler, XRExecError, is_ipv4_subnet
 
-import logging
+import logging.config
+import log_conf
 
-LOG_LOCAL_FILE = ''.join([os.curdir, "bgpfs2acl.log"])
-
-logging.basicConfig(
-    filename=LOG_LOCAL_FILE,
-    level=logging.DEBUG,
-    format='%(asctime)s | %(levelname)s | %(message)s'
-)
-
-console = logging.StreamHandler()
-console.setLevel(logging.INFO)
-formatter = logging.Formatter('%(name)s: %(levelname)s %(message)s')
-console.setFormatter(formatter)
-logging.getLogger('').addHandler(console)
+logging.config.dictConfig(log_conf.LOG_CONFIG)
+logger = logging.getLogger(__name__)
 
 STATUS_ERROR = 'error'
 STATUS_SUCCESS = 'success'
@@ -41,10 +30,19 @@ class XRCmdClient:
         self.ssh = paramiko.SSHClient()
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-        self.ssh.connect(host, username=user, password=password, port=port)
+        self.ssh.connect(
+            host,
+            username=user,
+            password=password,
+            port=port,
+            look_for_keys=False,
+            allow_agent=False
+        )
         channel = self.ssh.invoke_shell()
         self.stdin = channel.makefile('wb')
         self.stdout = channel.makefile('r')
+
+        # this output was made for cleaning stdout out of info about established ssh connection
         ready_msg = 'connected succesfully'
         self.stdin.write('echo {}\n'.format(ready_msg))
         for line in self.stdout:
@@ -55,22 +53,21 @@ class XRCmdClient:
         self.ssh.close()
 
     @staticmethod
-    def _print_exec_out(cmd, out_buf, err_buf, exit_status):
-        logging.info('command executed: {}'.format(cmd))
+    def _print_exec_out(cmd, out_buf):
+        logger.info('command executed: {}'.format(cmd))
         if out_buf:
-            logging.info('STDOUT:')
-            for line in out_buf:
-                logging.info(line)
-            logging.info('end of STDOUT')
-        if err_buf:
-            logging.info('STDERR:')
-            for line in err_buf:
-                logging.error(line)
-            logging.info('end of STDERR')
-
-        logging.info('finished with exit status: {}'.format(exit_status))
+            logger.info('OUTPUT:')
+            logger.info(pformat(out_buf))
+            logger.info('end of OUTPUT')
 
     def _exec_xr_func(self, xr_func, xr_arg):
+        """
+        Execute xr command through the ssh using channel
+        :param xr_func: xr function from ztp_helper.sh (xrcmd or xrapply_string)
+        :param xr_arg: argument string being passed to an xr function
+        :return:
+        :raises: XRExecError due to failure
+        """
         xr_arg = xr_arg.strip('\n')
         cmd = 'sudo su - root -c "source /pkg/bin/ztp_helper.sh && {func} \'{arg}\'"'.format(func=xr_func, arg=xr_arg)
         self.stdin.write(''.join([cmd, '\n']))
@@ -79,53 +76,41 @@ class XRCmdClient:
         self.stdin.write(echo_cmd + '\n')
         self.stdin.flush()
 
-        shout = []
-        sherr = []
+        output = []
         exit_status = 0
         for line in self.stdout:
             if str(line).startswith(cmd) or str(line).startswith(echo_cmd):
                 # up for now filled with shell junk from stdin
-                shout = []
+                output = []
             elif str(line).startswith(finish):
                 # our finish command ends with the exit status
                 exit_status = int(str(line).rsplit(None, 1)[1])
-                if exit_status:
-                    # stderr is combined with stdout.
-                    # thus, swap sherr with shout in a case of failure.
-                    sherr = shout
-                    shout = []
                 break
             elif line.isspace():
                 continue
             else:
                 # get rid of 'coloring and formatting' special characters
-                shout.append(re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]').sub('', line).
+                output.append(re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]').sub('', line).
                              replace('\b', '').replace('\r', ''))
 
-        # first and last lines of shout/sherr contain a prompt
-        if shout and echo_cmd in shout[-1]:
-            shout.pop()
-        if shout and cmd in shout[0]:
-            shout.pop(0)
-        if sherr and echo_cmd in sherr[-1]:
-            sherr.pop()
-        if sherr and cmd in sherr[0]:
-            sherr.pop(0)
+        # first and last lines of output contain a prompt
+        if output and echo_cmd in output[-1]:
+            output.pop()
+        if output and cmd in output[0]:
+            output.pop(0)
 
-        self._print_exec_out(cmd=cmd, out_buf=shout, err_buf=sherr, exit_status=exit_status)
-        return shout, sherr, exit_status
+        # xrapply_string returns 1 due to failure, xrcmd returns 0, but has a pattern in first line
+        if exit_status or output[0].startswith('showtech_helper error:'):
+            raise XRExecError(pformat(output))
+
+        self._print_exec_out(cmd=cmd, out_buf=output)
+        return output
 
     def xrcmd(self, cmd):
-        output, err_output, status = self._exec_xr_func('xrcmd', cmd)
-        if status:
-            return {"status": STATUS_ERROR, "output": err_output}
-        return {"status": STATUS_SUCCESS, "output": output}
+        return self._exec_xr_func('xrcmd', cmd)
 
     def xrapply_string(self, cmd):
-        output, err_output, status = self._exec_xr_func('xrapply_string', cmd)
-        if status:
-            return {"status": STATUS_ERROR, "output": err_output}
-        return {"status": STATUS_SUCCESS, "output": output}
+        return self._exec_xr_func('xrapply_string', cmd)
 
 
 def parse_flowspec_rules_ipv4(rules):
@@ -189,7 +174,7 @@ def constructed_acl(fs_rules, xr_client):
 
             if 'Source' in sub_part:
                 ace_entry['SourceIP'] = ' ' + sub_part[sub_part.find(':') + 1:]
-                if is_subnet(ace_entry['SourceIP']):
+                if is_ipv4_subnet(ace_entry['SourceIP']):
                     ace_entry['DestIP'] = ''
                     break
 
@@ -322,9 +307,9 @@ def constructed_acl(fs_rules, xr_client):
     for intf in interfaces_to_apply:
         applied_config += intf + '\n'
         applied_config += 'ipv4 access-group {0} ingress \n'.format(default_acl_name)
-    logging.info(applied_config)
-    write_config(xr_client, applied_config)
-    logging.info("Config was applied on the device")
+    logger.info(applied_config)
+    xr_client.xrapply_string(applied_config)
+    logger.info("Config was applied on the device")
 
 
 def parse_interfaces(interfaces_with_acls):
@@ -351,40 +336,28 @@ def filter_interfaces(interfaces, regexp):
 def conv_initiate(xr_client):
     # threading.Timer(frequency, conv_initiate).start()
     flowspec_ipv4 = xr_client.xrcmd("sh flowspec ipv4")
-    if flowspec_ipv4['status'] == STATUS_ERROR:
-        raise XRExecError(flowspec_ipv4['output'])
-
-    interfaces = xr_client.xrcmd("sh running interface")
-    if interfaces['status'] == STATUS_ERROR:
-        raise XRExecError(interfaces['output'])
-    filtered_interfaces = filter_interfaces(interfaces['output'], '^Hu.*')
-    parse_interfaces(filtered_interfaces)
     if len(flowspec_ipv4) > 1:
-        pprint(flowspec_ipv4['output'])
-        print(" ")
-        parsed_fs = parse_flowspec_rules_ipv4(flowspec_ipv4['output'][1:])
+        parsed_fs = parse_flowspec_rules_ipv4(flowspec_ipv4[1:])
         constructed_acl(parsed_fs, xr_client)
 
 
 def get_interfaces(xr_client):
-    logging.info("Parsing Interfaces ")
-    interfaces = xr_client.xrcmd("sh running interface")['output']
+    logger.info("Parsing Interfaces ")
+    interfaces = xr_client.xrcmd("sh running interface")
     filtered_interfaces = filter_interfaces(interfaces, '^interface (Gig|Ten|Twe|Fo|Hu).*')
-    logging.info(filtered_interfaces)
+    logger.info(filtered_interfaces)
     return interface_handler(filtered_interfaces)
 
 
 def clean_script_actions(ssh_client):
+    logger.info('###### Reverting applied acl rules... ######')
     applied_config = "no ipv4 access-list bgpfs2acl-ipv4"
-    write_config(ssh_client, applied_config)
-    print("###### Script execution was complete ######")
-
-    sys.exit('Terminating script')
+    ssh_client.xrapply_string(applied_config)
+    logger.info("###### Script execution was complete ######")
 
 
 if __name__ == "__main__":
-    # TODO: output to a logfile
-    print("###### Starting BGPFS2ACL RUN on XR based device ######")
+    logger.info("###### Starting BGPFS2ACL RUN on XR based device ######")
 
     parser = argparse.ArgumentParser(description='BGP FlowSpec to ACL converter')
     parser.add_argument("-v", "--verbose", action="store_true",
@@ -396,15 +369,19 @@ if __name__ == "__main__":
     parser.add_argument("--revert", help="Start script in clean up mode", action="store_true")
     parser.add_argument("--default_acl_name", type=str, default='bgpfs2acl-ipv4',
                         dest='default_acl_name', help="Define default ACL name")
+
+    parser.add_argument("--user", help="User for ssh connection", type=str)
+    parser.add_argument("--password", help="Password for ssh connection", type=str)
     # Todo add fix line numbers;
     # Todo add verbose story;
 
     args = parser.parse_args()
 
-    xr_cmd_client = XRCmdClient('10.30.111.177', '57722', 'qazqaz', 'qazswxde')
+    xr_cmd_client = XRCmdClient('10.30.111.177', '57722', args.user, args.password)
 
     if args.revert:
         clean_script_actions(xr_cmd_client)
+        sys.exit()
 
     frequency = int(args.frequency)
     default_acl_name = str(args.default_acl_name)
