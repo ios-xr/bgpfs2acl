@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 from __future__ import print_function
+
 import argparse
-import os
 import re
 
 import sys
@@ -17,9 +17,6 @@ import log_conf
 
 logging.config.dictConfig(log_conf.LOG_CONFIG)
 logger = logging.getLogger(__name__)
-
-STATUS_ERROR = 'error'
-STATUS_SUCCESS = 'success'
 
 
 class XRCmdClient:
@@ -106,11 +103,11 @@ class XRCmdClient:
         self._print_exec_out(cmd=cmd, out_buf=output)
         return output
 
-    def xrcmd(self, cmd):
-        return self._exec_xr_func('xrcmd', cmd)
+    def xrcmd(self, arg_str):
+        return self._exec_xr_func('xrcmd', arg_str)
 
-    def xrapply_string(self, cmd):
-        return self._exec_xr_func('xrapply_string', cmd)
+    def xrapply_string(self, arg_str):
+        return self._exec_xr_func('xrapply_string', arg_str)
 
 
 def parse_flowspec_rules_ipv4(rules):

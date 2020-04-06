@@ -1,4 +1,3 @@
-import logging.config
 import os
 
 LOG_FILE = os.path.join(os.path.abspath(os.path.curdir), 'log', 'bgpfs2acl.log')
