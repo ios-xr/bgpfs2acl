@@ -1,5 +1,6 @@
 import os
 
+# User can change path to log on his own
 LOG_FILE = os.path.join(os.path.abspath(os.path.curdir), 'log', 'bgpfs2acl.log')
 
 # creating path to store logs if it doesn't exist
