@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 
-script_name = bgpfs2acl.py
+name=bgpfs2acl
 
-if ![[ -x "$script_name" ]]
-then
-    chmod +x bgpfs2acl.py
-fi
+docker stop ${name} 2>&1 > /dev/null
 
-ip netns exec global-vrf $(pwd)/bgpfs2acl.py
+docker rm ${name} 2>&1 > /dev/null
+
+docker run -itd --name ${name} \
+    -v /var/run/netns/global-vrf:/var/run/netns/global-vrf \
+    -v /home/${name}/{name}:/root/.ssh/id_ed25519 \
+    --cap-add=SYS_ADMIN ${name}

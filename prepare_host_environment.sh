@@ -5,16 +5,13 @@
 set -e
 username=bgpfs2acl
 
-adduser \
-    --quiet \
+useradd \
     --system \
+    --create-home \
+    --user-group \
     --shell /bin/bash \
-    --group \
-    --disabled-password \
-    --home /home/${username} \
+    --groups sudo \
     ${username}
-
-usermod -aG sudo ${username}
 
 mkdir -p /home/${username}/.ssh
 
