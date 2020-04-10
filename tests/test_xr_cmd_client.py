@@ -107,7 +107,7 @@ def xr_client_fixture(mocker):
 
         mocker.patch('paramiko.SSHClient.connect')
         mocker.patch('paramiko.SSHClient.invoke_shell', return_value=Channel())
-        return XRCmdClient(IP_STUB, PORT_STUB, USERNAME_STUB, PASSWORD_STUB)
+        return XRCmdClient(user=USERNAME_STUB, password=PASSWORD_STUB,host=IP_STUB, port=PORT_STUB)
 
     return _xr_client_fixture
 

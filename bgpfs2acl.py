@@ -20,20 +20,23 @@ logger = logging.getLogger(__name__)
 
 
 class XRCmdClient:
-    def __init__(self, host, port, user, password):
-        self.host = host
-        self.port = port
-        self.password = password
+    def __init__(self, user, password='', host='127.0.0.1', port='57722'):
+
         self.ssh = paramiko.SSHClient()
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        look_for_keys, allow_agent = True, True
+
+        if password:
+            look_for_keys, allow_agent = False, False
 
         self.ssh.connect(
             host,
             username=user,
             password=password,
-            port=port,
-            look_for_keys=False,
-            allow_agent=False
+            port=int(port),
+            look_for_keys=look_for_keys,
+            allow_agent=allow_agent
         )
         channel = self.ssh.invoke_shell()
         self.stdin = channel.makefile('wb')
@@ -331,7 +334,7 @@ def filter_interfaces(interfaces, regexp):
 
 
 def conv_initiate(xr_client):
-    # threading.Timer(frequency, conv_initiate).start()
+    threading.Timer(frequency, conv_initiate, [xr_client]).start()
     flowspec_ipv4 = xr_client.xrcmd("sh flowspec ipv4")
     if len(flowspec_ipv4) > 1:
         parsed_fs = parse_flowspec_rules_ipv4(flowspec_ipv4[1:])
@@ -367,14 +370,19 @@ if __name__ == "__main__":
     parser.add_argument("--default_acl_name", type=str, default='bgpfs2acl-ipv4',
                         dest='default_acl_name', help="Define default ACL name")
 
-    parser.add_argument("--user", help="User for ssh connection", type=str)
-    parser.add_argument("--password", help="Password for ssh connection", type=str)
+    parser.add_argument("--user", help="User for ssh connection", type=str, required=True)
+    parser.add_argument("--password",
+                        help="Password for ssh connection. Omit if use key authorization.",
+                        type=str,
+                        default='')
+    parser.add_argument("--host", help="Router host address for ssh connection", type=str, default='127.0.0.1')
+    parser.add_argument("--port", help="Router ssh port", type=int, default=57722)
     # Todo add fix line numbers;
     # Todo add verbose story;
 
     args = parser.parse_args()
 
-    xr_cmd_client = XRCmdClient('10.30.111.177', '57722', args.user, args.password)
+    xr_cmd_client = XRCmdClient(user=args.user, password=args.password, host=args.host, port=args.port)
 
     if args.revert:
         clean_script_actions(xr_cmd_client)
