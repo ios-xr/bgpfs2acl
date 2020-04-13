@@ -134,12 +134,9 @@ def constructed_acl(fs_rules, xr_client):
     alternator = 0
 
     # ICMP_code with ICMP_type migration
+    # TODO: explain this loop
     for key, value in fs_rules.iteritems():
         buff = ''
-        # buff1 = [s for s in value if 'ICMPCode' in s]
-        # buff2 = [s for s in value if 'ICMPType' in s]
-        # if len(buff1 + buff2) > 1:
-        #     for el in buff1
 
         # We expect to have bothL ICMP
         for val in value:
@@ -281,27 +278,14 @@ def constructed_acl(fs_rules, xr_client):
                 acl.append(ace)
             range_icmp = []
 
-    # applied_config = ''.format(default_acl_name)
     applied_config = 'no ipv4 access-list {0}\nipv4 access-list {0} \n'.format(default_acl_name)
 
     for l in sorted(acl):
-        # print l
         applied_config += '\n' + l
 
     applied_config += '\n'
     applied_config += '100999 permit any\n'
-    # applied_config += """interface HundredGigE0/0/1/0
-    #  ipv4 access-group bgp-fs2acl-ipv4 ingress
-    #  !"""
 
-    # with tempfile.NamedTemporaryFile(delete=True) as f:
-    #
-    #     f.write("%s" % applied_config)
-    #     f.flush()
-    #     f.seek(0)
-    #     result = ztp_script.xrapply(f.name)
-    #     print result['status']
-    #     f.close()
     interfaces_to_apply = get_interfaces(xr_client)['apply_ACLs']
 
     for intf in interfaces_to_apply:
@@ -390,5 +374,4 @@ if __name__ == "__main__":
 
     frequency = int(args.frequency)
     default_acl_name = str(args.default_acl_name)
-    # sys.exit()
     conv_initiate(xr_cmd_client)
