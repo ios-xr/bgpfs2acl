@@ -3,12 +3,7 @@
 ### Starts bgpfs2acl script inside container
 set -e
 
-script_name=bgpfs2acl.py
-username=${script_name}
+username=bgpfs2acl
+script_name=${username}.py
 
-if [[ ! -x "${script_name}" ]]
-then
-    chmod +x ${script_name}
-fi
-
-ip netns exec global-vrf $(pwd)/bgpfs2acl.py --user=${username}
+ip netns exec global-vrf python $(pwd)/${script_name} --user=${username}

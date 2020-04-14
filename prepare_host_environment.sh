@@ -30,16 +30,23 @@ ssh-keygen \
     -t ed25519 \
     -C "${username}"\
     -N "" \
-    -f "/home/${username}/${username}" \
+    -f "/home/${username}/${username}_key" \
     <<< y \
     > /dev/null
 
 printf "Keypair was created and stored in /home/${username}\n"
 
-cat /home/${username}/${username}.pub >> /home/${username}/.ssh/authorized_keys
+cat /home/${username}/${username}_key.pub >> /home/${username}/.ssh/authorized_keys
 
 chown ${username}:${username} /home/${username}/.ssh -R
 chmod 700 /home/${username}/.ssh -R
 chmod 600 /home/${username}/.ssh/authorized_keys
 
-printf "Pubkey was written to ~/.ssh/authorized_keys.\n"
+printf "Public key was added to ~/.ssh/authorized_keys.\n"
+
+### TODO: need to figure out places permitted to mount to docker. Temporary solution:
+cp /home/${username}/${username}_key /bindmnt_netns/
+chmod 444 /bindmnt_netns/${username}_key
+ln -s /bindmnt_netns/${username}_key /var/run/netns/${username}_key
+
+printf "Symlink for key file was created.\n"
