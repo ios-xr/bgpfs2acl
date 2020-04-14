@@ -94,13 +94,14 @@ class XRCmdClient:
                              replace('\b', '').replace('\r', ''))
 
         # first and last lines of output contain a prompt
-        if output and echo_cmd in output[-1]:
+        # join/split need because xr returns whitespace after 80th symbol
+        if output and ''.join(echo_cmd.split()) in ''.join(output[-1].split()):
             output.pop()
-        if output and cmd in output[0]:
+        if output and ''.join(cmd.split()) in ''.join(output[0].split()):
             output.pop(0)
 
         # xrapply_string returns 1 due to failure, xrcmd returns 0, but has a pattern in first line
-        if exit_status or output[0].startswith('showtech_helper error:'):
+        if exit_status or (output and output[0].startswith('showtech_helper error:')):
             raise XRExecError(pformat(output))
 
         self._print_exec_out(cmd=cmd, out_buf=output)
