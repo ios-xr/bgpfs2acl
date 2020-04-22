@@ -1,16 +1,29 @@
-import pprint
-import tempfile
+from pprint import pprint, pformat
+import logging
+logger = logging.getLogger(__name__)
 
 
-def write_config(cfg_entry, ztp_script):
-    with tempfile.NamedTemporaryFile(delete=True) as f:
-        f.write("%s" % cfg_entry)
-        f.flush()
-        f.seek(0)
-        result = ztp_script.xrapply(f.name)
-        f.close()
-    print 'Result {0}'.format(result)
-    return result['status']
+class XRExecError(StandardError):
+    pass
+
+
+def is_ipv4_subnet(ip_address):
+    ip_address = ip_address.strip()
+    ip_address = ip_address.split('/')
+    if len(ip_address) != 2:
+        return False
+    net_address, net_mask = ip_address
+    if not net_mask.isdigit() or int(net_mask) >= 32:
+        return False
+
+    net_mask = int(net_mask)
+    net_addr_bin = ''.join([bin(int(x) + 256)[3:] for x in net_address.split('.')])
+    suffix_len = 32 - net_mask
+
+    if not net_addr_bin[net_mask:] == '0' * suffix_len:
+        return False
+
+    return True
 
 
 def parse_range(port_string):
@@ -56,7 +69,7 @@ def interface_handler(int_dict):
             interface_chunks.remove(intf)
 
         # acl_appliance = 'shutdown' not in intf and 'ipv4 a'
-    pprint.pprint(interface_chunks)
+    pprint(interface_chunks)
     for intf in interface_chunks:
 
         if ("Gig" or "Ten" or "Twe" or "For" or "Hun") not in intf[0]:
@@ -72,11 +85,11 @@ def interface_handler(int_dict):
             else:
                 int_apply_acl.append(intf[0])
 
-    pprint.pprint(interface_chunks)
+    pprint(interface_chunks)
 
     # Apply ACL
     print "Apply ACLs"
-    pprint.pprint(int_apply_acl)
+    pprint(int_apply_acl)
     # print "Don't apply ACL"
     # pprint.pprint(int_dont_touch)
 

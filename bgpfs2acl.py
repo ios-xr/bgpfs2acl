@@ -1,48 +1,143 @@
 #!/usr/bin/env python
+from __future__ import print_function
+
 import argparse
+import re
 
 import sys
 import threading
-from pprint import pprint
-from func_lib import parse_range, write_config, interface_handler
+from pprint import pprint, pformat
 
-sys.path.append("/pkg/bin/")
+import paramiko
 
-# noinspection PyUnresolvedReferences
-from ztp_helper import ZtpHelpers
+from func_lib import parse_range, interface_handler, XRExecError, is_ipv4_subnet
 
-SYSLOG_SERVER = "11.11.11.2"
-SYSLOG_PORT = 514
-SYSLOG_LOCAL_FILE = "/root/ztp_python.log"
+import logging.config
+import log_conf
+
+logging.config.dictConfig(log_conf.LOG_CONFIG)
+logger = logging.getLogger(__name__)
+
+
+class XRCmdClient:
+    def __init__(self, user, password='', host='127.0.0.1', port='57722'):
+
+        self.ssh = paramiko.SSHClient()
+        self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        look_for_keys, allow_agent = True, True
+
+        if password:
+            look_for_keys, allow_agent = False, False
+
+        self.ssh.connect(
+            host,
+            username=user,
+            password=password,
+            port=int(port),
+            look_for_keys=look_for_keys,
+            allow_agent=allow_agent
+        )
+        channel = self.ssh.invoke_shell()
+        self.stdin = channel.makefile('wb')
+        self.stdout = channel.makefile('r')
+
+        # this output was made for cleaning stdout out of info about established ssh connection
+        ready_msg = 'connected succesfully'
+        self.stdin.write('echo {}\n'.format(ready_msg))
+        for line in self.stdout:
+            if line.startswith(ready_msg):
+                break
+
+    def __del__(self):
+        self.ssh.close()
+
+    @staticmethod
+    def _print_exec_out(cmd, out_buf):
+        logger.info('command executed: {}'.format(cmd))
+        if out_buf:
+            logger.info('OUTPUT:')
+            logger.info(pformat(out_buf))
+            logger.info('end of OUTPUT')
+
+    def _exec_xr_func(self, xr_func, xr_arg):
+        """
+        Execute xr command through the ssh using channel
+        :param xr_func: xr function from ztp_helper.sh (xrcmd or xrapply_string)
+        :param xr_arg: argument string being passed to an xr function
+        :return:
+        :raises: XRExecError due to failure
+        """
+        xr_arg = xr_arg.strip('\n')
+        cmd = 'sudo su - root -c "source /pkg/bin/ztp_helper.sh && {func} \'{arg}\'"'.format(func=xr_func, arg=xr_arg)
+        self.stdin.write(''.join([cmd, '\n']))
+        finish = 'end of stdOUT buffer. finished with exit status'
+        echo_cmd = 'echo {} $?'.format(finish)
+        self.stdin.write(echo_cmd + '\n')
+        self.stdin.flush()
+
+        output = []
+        exit_status = 0
+        for line in self.stdout:
+            if str(line).startswith(cmd) or str(line).startswith(echo_cmd):
+                # up for now filled with shell junk from stdin
+                output = []
+            elif str(line).startswith(finish):
+                # our finish command ends with the exit status
+                exit_status = int(str(line).rsplit(None, 1)[1])
+                break
+            elif line.isspace():
+                continue
+            else:
+                # get rid of 'coloring and formatting' special characters
+                output.append(re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]').sub('', line).
+                             replace('\b', '').replace('\r', ''))
+
+        # first and last lines of output contain a prompt
+        # join/split need because xr returns whitespace after 80th symbol
+        if output and ''.join(echo_cmd.split()) in ''.join(output[-1].split()):
+            output.pop()
+        if output and ''.join(cmd.split()) in ''.join(output[0].split()):
+            output.pop(0)
+
+        # xrapply_string returns 1 due to failure, xrcmd returns 0, but has a pattern in first line
+        if exit_status or (output and output[0].startswith('showtech_helper error:')):
+            raise XRExecError(pformat(output))
+
+        self._print_exec_out(cmd=cmd, out_buf=output)
+        return output
+
+    def xrcmd(self, arg_str):
+        return self._exec_xr_func('xrcmd', arg_str)
+
+    def xrapply_string(self, arg_str):
+        return self._exec_xr_func('xrapply_string', arg_str)
 
 
 def parse_flowspec_rules_ipv4(rules):
     fs_dict = {}
 
-    print '*' * 10
+    print('*' * 10)
     k = 0
 
     for i in range(0, len(rules), 2):
         if 'Traffic-rate: 0 bps' in rules[i + 1]:
             fs_dict[k] = rules[i].split(',')
-            fs_dict[k][0] = fs_dict[k][0][rules[i].split(',')[0].find(':') + 1:]
+            fs_dict[k][0] = fs_dict[k][0][fs_dict[k][0].find(':') + 1:]
             k += 1
     pprint(fs_dict)
 
     return fs_dict
 
 
-def constructed_acl(fs_rules):
+def constructed_acl(fs_rules, xr_client):
     start_sequence = 10010
     alternator = 0
 
     # ICMP_code with ICMP_type migration
+    # TODO: explain this loop
     for key, value in fs_rules.iteritems():
         buff = ''
-        # buff1 = [s for s in value if 'ICMPCode' in s]
-        # buff2 = [s for s in value if 'ICMPType' in s]
-        # if len(buff1 + buff2) > 1:
-        #     for el in buff1
 
         # We expect to have bothL ICMP
         for val in value:
@@ -71,11 +166,15 @@ def constructed_acl(fs_rules):
             'icmp': ''
         }
         for sub_part in fs_rules[i]:
+            sub_part = sub_part.strip('\n')
             if 'Proto' in sub_part:
                 ace_entry['Protocol'] = ' ' + sub_part[sub_part.find('=') + 1:]
 
             if 'Source' in sub_part:
                 ace_entry['SourceIP'] = ' ' + sub_part[sub_part.find(':') + 1:]
+                if is_ipv4_subnet(ace_entry['SourceIP']):
+                    ace_entry['DestIP'] = ''
+                    break
 
             if 'SPort' in sub_part:
                 ace_entry['SourcePort'] = sub_part[sub_part.find(':') + 1:]
@@ -163,7 +262,7 @@ def constructed_acl(fs_rules):
                        ace_entry['SourceIP'] + ace_entry['SourcePort'] + \
                        ace_entry['DestIP'] + range_dport[n] + \
                        ace_entry['packet-length'] + ace_entry['icmp']
-                print ace
+                print(ace)
                 acl.append(ace)
             range_dport = []
 
@@ -180,35 +279,22 @@ def constructed_acl(fs_rules):
                 acl.append(ace)
             range_icmp = []
 
-    # applied_config = ''.format(default_acl_name)
     applied_config = 'no ipv4 access-list {0}\nipv4 access-list {0} \n'.format(default_acl_name)
 
     for l in sorted(acl):
-        # print l
         applied_config += '\n' + l
 
     applied_config += '\n'
     applied_config += '100999 permit any\n'
-    # applied_config += """interface HundredGigE0/0/1/0
-    #  ipv4 access-group bgp-fs2acl-ipv4 ingress
-    #  !"""
 
-    # with tempfile.NamedTemporaryFile(delete=True) as f:
-    #
-    #     f.write("%s" % applied_config)
-    #     f.flush()
-    #     f.seek(0)
-    #     result = ztp_script.xrapply(f.name)
-    #     print result['status']
-    #     f.close()
-    interaces_to_apply = get_interfaces()['apply_ACLs']
+    interfaces_to_apply = get_interfaces(xr_client)['apply_ACLs']
 
-    for intf in interaces_to_apply:
+    for intf in interfaces_to_apply:
         applied_config += intf + '\n'
         applied_config += 'ipv4 access-group {0} ingress \n'.format(default_acl_name)
-    print applied_config
-    write_config(applied_config, ztp_script)
-    ztp_script.syslogger.info("Config was applied on the device")
+    logger.info(applied_config)
+    xr_client.xrapply_string(applied_config)
+    logger.info("Config was applied on the device")
 
 
 def parse_interfaces(interfaces_with_acls):
@@ -216,41 +302,47 @@ def parse_interfaces(interfaces_with_acls):
     pass
 
 
-def conv_initiate():
-    threading.Timer(frequency, conv_initiate).start()
-    flowspec_ipv4 = ztp_script.xrcmd({"exec_cmd": "sh flowspec ipv4"})
-    interfaces_with_acls = ztp_script.xrcmd({"exec_cmd": "sh running interface | begin 'Hu'"})
-    parse_interfaces(interfaces_with_acls['output'])
+def filter_interfaces(interfaces, regexp):
+    """Filter the list of interfaces by matching the regular expression."""
+
+    filtered_interfaces = []
+    pat = re.compile(r'{}'.format(regexp))
+
+    for i, line in enumerate(interfaces):
+        if pat.match(line):
+            filtered_interfaces.append(line)
+            j = i + 1
+            while j < len(interfaces) and not interfaces[j].startswith('interface '):
+                filtered_interfaces.append(interfaces[j])
+                j += 1
+    return filtered_interfaces
+
+
+def conv_initiate(xr_client):
+    threading.Timer(frequency, conv_initiate, [xr_client]).start()
+    flowspec_ipv4 = xr_client.xrcmd("sh flowspec ipv4")
     if len(flowspec_ipv4) > 1:
-        pprint(flowspec_ipv4['output'])
-        print(" ")
-        parsed_fs = parse_flowspec_rules_ipv4(flowspec_ipv4['output'][1:])
-        constructed_acl(parsed_fs)
+        parsed_fs = parse_flowspec_rules_ipv4(flowspec_ipv4[1:])
+        constructed_acl(parsed_fs, xr_client)
 
 
-def get_interfaces():
-    ztp_script.syslogger.info("Parsing Interfaces ")
+def get_interfaces(xr_client):
+    logger.info("Parsing Interfaces ")
+    interfaces = xr_client.xrcmd("sh running interface")
+    filtered_interfaces = filter_interfaces(interfaces, '^interface (Gig|Ten|Twe|Fo|Hu).*')
+    logger.info(filtered_interfaces)
+    return interface_handler(filtered_interfaces)
 
-    pprint(ztp_script.xrcmd({"exec_cmd": r"sh running interface | begin \"Gig|Ten|Twe|Fo|Hu\""}))
-    return interface_handler(ztp_script.xrcmd({"exec_cmd": r"sh running interface | begin \"Gig|Ten|Twe|Fo|Hu\""})['output'])
 
-
-def clean_script_actions():
-    applied_config = """
-    conf t
-    no ipv4 access-list bgpfs2acl-ipv4
-    commit
-    !
-    ztp terminate noprompt"""
-    write_config(applied_config, ztp_script)
-    ztp_script.syslogger.info("###### Script execution was complete ######")
-
-    sys.exit('Terminating script')
+def clean_script_actions(ssh_client):
+    logger.info('###### Reverting applied acl rules... ######')
+    applied_config = "no ipv4 access-list bgpfs2acl-ipv4"
+    ssh_client.xrapply_string(applied_config)
+    logger.info("###### Script execution was complete ######")
 
 
 if __name__ == "__main__":
-    ztp_script = ZtpHelpers(syslog_file=SYSLOG_LOCAL_FILE, syslog_server=SYSLOG_SERVER, syslog_port=SYSLOG_PORT)
-    ztp_script.syslogger.info("###### Starting BGPFS2ACL RUN on XR based device ######")
+    logger.info("###### Starting BGPFS2ACL RUN on XR based device ######")
 
     parser = argparse.ArgumentParser(description='BGP FlowSpec to ACL converter')
     parser.add_argument("-v", "--verbose", action="store_true",
@@ -262,14 +354,25 @@ if __name__ == "__main__":
     parser.add_argument("--revert", help="Start script in clean up mode", action="store_true")
     parser.add_argument("--default_acl_name", type=str, default='bgpfs2acl-ipv4',
                         dest='default_acl_name', help="Define default ACL name")
+
+    parser.add_argument("--user", help="User for ssh connection", type=str, required=True)
+    parser.add_argument("--password",
+                        help="Password for ssh connection. Omit if use key authorization.",
+                        type=str,
+                        default='')
+    parser.add_argument("--host", help="Router host address for ssh connection", type=str, default='127.0.0.1')
+    parser.add_argument("--port", help="Router ssh port", type=int, default=57722)
     # Todo add fix line numbers;
     # Todo add verbose story;
 
     args = parser.parse_args()
+
+    xr_cmd_client = XRCmdClient(user=args.user, password=args.password, host=args.host, port=args.port)
+
     if args.revert:
-        clean_script_actions()
+        clean_script_actions(xr_cmd_client)
+        sys.exit()
 
     frequency = int(args.frequency)
     default_acl_name = str(args.default_acl_name)
-    # sys.exit()
-    conv_initiate()
+    conv_initiate(xr_cmd_client)
