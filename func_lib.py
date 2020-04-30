@@ -69,7 +69,6 @@ def interface_handler(int_dict):
             interface_chunks.remove(intf)
 
         # acl_appliance = 'shutdown' not in intf and 'ipv4 a'
-    pprint(interface_chunks)
     for intf in interface_chunks:
 
         if ("Gig" or "Ten" or "Twe" or "For" or "Hun") not in intf[0]:

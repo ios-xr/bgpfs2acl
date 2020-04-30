@@ -91,7 +91,7 @@ class XRCmdClient:
             else:
                 # get rid of 'coloring and formatting' special characters
                 output.append(re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]').sub('', line).
-                             replace('\b', '').replace('\r', ''))
+                             replace('\b', '').replace('\r', '').strip())
 
         # first and last lines of output contain a prompt
         # join/split need because xr returns whitespace after 80th symbol
@@ -133,23 +133,6 @@ def parse_flowspec_rules_ipv4(rules):
 def constructed_acl(fs_rules, xr_client):
     start_sequence = 10010
     alternator = 0
-
-    # ICMP_code with ICMP_type migration
-    # TODO: explain this loop
-    for key, value in fs_rules.iteritems():
-        buff = ''
-
-        # We expect to have bothL ICMP
-        for val in value:
-            if 'ICMPCode' in val or 'ICMPType' in val:
-                if buff:
-                    buff += '|' + val[val.find('='):]
-                else:
-                    buff += val[val.find('='):]
-
-        if buff:
-            value.append('ICMPMerged:' + buff)
-        value = [i for i in value if not ('ICMPCode' in i or 'ICMPType' in i)]
 
     acl, range_length, range_dport, range_sport, range_icmp = [], [], [], [], []
 
@@ -327,7 +310,7 @@ def conv_initiate(xr_client):
 
 
 def get_interfaces(xr_client):
-    logger.info("Parsing Interfaces ")
+    logger.info("Parsing Interfaces")
     interfaces = xr_client.xrcmd("sh running interface")
     filtered_interfaces = filter_interfaces(interfaces, '^interface (Gig|Ten|Twe|Fo|Hu).*')
     logger.info(filtered_interfaces)

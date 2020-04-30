@@ -131,11 +131,11 @@ end of stdOUT buffer. finished with exit status 0
 """)
         result = xr_client.xrcmd("sh flowspec ipv4")
         assert result == [
-            'AFI: IPv4\n',
-            '  Flow           test\n',
-            '    Actions      test test\n',
-            '  Flow           :Source:100.0.0.0/24\n',
-            '    Actions      :Traffic-rate: 0 bps  (bgp.1)\n'
+            'AFI: IPv4',
+            'Flow           test',
+            'Actions      test test',
+            'Flow           :Source:100.0.0.0/24',
+            'Actions      :Traffic-rate: 0 bps  (bgp.1)'
         ]
 
     def test_xrapply_string_success(self, xr_client_fixture):
@@ -144,14 +144,12 @@ Test test test
 Testmachine:~$ echo connected succesfully
 connected succesfully
 Testmachine:~$ sudo su - root -c "source /pkg/bin/ztp_helper.sh && xrapply_string \'no ipv4 access-list bgpfs2acl-ipv4
-> ipv4 access-list bgpfs2acl-ipv4 
-> 
+> ipv4 access-list bgpfs2acl-ipv4
 > 10010 deny  17 any 7.7.7.7/32 eq 111
 > 100999 permit any\'"
 echo end of stdOUT buffer. finished with exit status $?
 + (Applying configuration) no ipv4 access-list bgpfs2acl-ipv4
-+ (Applying configuration) ipv4 access-list bgpfs2acl-ipv4 
-+ (Applying configuration) 
++ (Applying configuration) ipv4 access-list bgpfs2acl-ipv4
 + (Applying configuration) 10010 deny  17 any 7.7.7.7/32 eq 111
 + (Applying configuration) 100999 permit any
 Testmachine:~$ echo end of stdOUT buffer. finished with exit status $?
@@ -164,11 +162,10 @@ ipv4 access-list bgpfs2acl-ipv4
 100999 permit any\'"""
         )
         assert result == [
-            u'+ (Applying configuration) no ipv4 access-list bgpfs2acl-ipv4\n',
-            u'+ (Applying configuration) ipv4 access-list bgpfs2acl-ipv4 \n',
-            u'+ (Applying configuration) \n',
-            u'+ (Applying configuration) 10010 deny  17 any 7.7.7.7/32 eq 111\n',
-            u'+ (Applying configuration) 100999 permit any\n'
+            u'+ (Applying configuration) no ipv4 access-list bgpfs2acl-ipv4',
+            u'+ (Applying configuration) ipv4 access-list bgpfs2acl-ipv4',
+            u'+ (Applying configuration) 10010 deny  17 any 7.7.7.7/32 eq 111',
+            u'+ (Applying configuration) 100999 permit any'
         ]
 
     def test_xrcmd_fail(self, xr_client_fixture):
@@ -190,9 +187,9 @@ end of stdOUT buffer. finished with exit status 0
             xr_client.xrcmd('sh flowspec')
 
         assert str(excinfo.value) == pprint.pformat([
-            'showtech_helper error: Parsing of command "sh flowspec " failed\n',
-            'sh flowspec\n',
-            '% Incomplete command.\n'
+            'showtech_helper error: Parsing of command "sh flowspec " failed',
+            'sh flowspec',
+            '% Incomplete command.'
         ])
 
     def test_xrapply_string_fail(self, xr_client_fixture):
@@ -221,13 +218,13 @@ end of stdOUT buffer. finished with exit status 1
             xr_client.xrapply_string('no ipv4 access-list')
 
         assert str(excinfo.value) == pprint.pformat([
-            '+ (Applying configuration) no ipv4 access-list\n',
-            '!! SYNTAX/AUTHORIZATION ERRORS: This configuration failed due to\n',
-            '!! one or more of the following reasons:\n',
-            '!!  - the entered commands do not exist,\n',
-            '!!  - the entered commands have errors in their syntax,\n',
-            '!!  - the software packages containing the commands are not active,\n',
-            '!!  - the current user is not a member of a task-group that has\n',
-            '!!    permissions to use the commands.\n',
-            'no ipv4 access-list\n'
+            '+ (Applying configuration) no ipv4 access-list',
+            '!! SYNTAX/AUTHORIZATION ERRORS: This configuration failed due to',
+            '!! one or more of the following reasons:',
+            '!!  - the entered commands do not exist,',
+            '!!  - the entered commands have errors in their syntax,',
+            '!!  - the software packages containing the commands are not active,',
+            '!!  - the current user is not a member of a task-group that has',
+            '!!    permissions to use the commands.',
+            'no ipv4 access-list'
         ])
