@@ -3,10 +3,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class XRExecError(StandardError):
-    pass
-
-
 def is_ipv4_subnet(ip_address):
     ip_address = ip_address.strip()
     ip_address = ip_address.split('/')
