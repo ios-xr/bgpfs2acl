@@ -23,42 +23,44 @@ class BgpFs2AclTool:
         self.xr_client = xr_client
 
     def get_interfaces(self):
+        """
+        Returns XR interfaces dict, where a key is an 'interface ...' line, and a value is a list of applied
+        features
+        :return: interfaces_dict
+        """
         logger.info("Getting Interfaces")
         interfaces = self.xr_client.xrcmd("sh running interface")
-        return interfaces
+        interfaces_dict = {}
+        for i, line in enumerate(interfaces):
+            if line.startswith('interface '):
+                interfaces_dict.update({line: []})
+                j = i + 1
+                while j < len(interfaces) and not interfaces[j].startswith('interface '):
+                    if line.strip() != '!':
+                        interfaces_dict[line].append(interfaces[j])
+                    j += 1
+
+        return interfaces_dict
 
     def filter_interfaces(self, interfaces, regexp):
         """Filter the list of interfaces by matching the regular expression."""
-
-        filtered_interfaces = []
+        filtered_interfaces = {}
         pat = re.compile(r'{}'.format(regexp))
 
-        for i, line in enumerate(interfaces):
-            if line.startswith('interface ') and pat.match(line):
-                filtered_interfaces.append(line)
-                j = i + 1
-                while j < len(interfaces) and not interfaces[j].startswith('interface '):
-                    filtered_interfaces.append(interfaces[j])
-                    j += 1
+        for interface_name, feature_list in interfaces.iteritems():
+            if pat.match(interface_name):
+                filtered_interfaces.update({interface_name: feature_list})
         return filtered_interfaces
 
     def get_interfaces_by_acl_name(self, acl_name):
-        result = []
-        interfaces = self.get_interfaces()
-        for i, line in enumerate(interfaces):
-            if line.startswith('interface'):
-                current_interface = [line, ]
-                has_acl = False
-                j = i + 1
-                while j < len(interfaces) and not interfaces[j].startswith('interface '):
-                    current_interface.append(interfaces[j])
-                    if ('access-group ' + acl_name + ' ingress') in interfaces[j]:
-                        has_acl = True
-                    j += 1
-
-                if has_acl:
-                    result += current_interface
-        return result
+        result_dict = {}
+        interfaces_dict = self.get_interfaces()
+        for interface_name, feature_list in interfaces_dict.iteritems():
+            for setting in feature_list:
+                if ('access-group ' + acl_name + ' ingress') in setting:
+                    result_dict.update({interface_name: feature_list})
+                    break
+        return result_dict
 
 
 def parse_flowspec_rules_ipv4(rules):
@@ -251,7 +253,7 @@ def filter_interfaces(interfaces, regexp):
 
 
 def conv_initiate(xr_client):
-    # threading.Timer(frequency, conv_initiate, [xr_client]).start()
+    threading.Timer(frequency, conv_initiate, [xr_client]).start()
     flowspec_ipv4 = xr_client.xrcmd("sh flowspec ipv4")
     if len(flowspec_ipv4) > 1:
         parsed_fs = parse_flowspec_rules_ipv4(flowspec_ipv4[1:])
