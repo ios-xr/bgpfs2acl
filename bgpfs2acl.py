@@ -22,23 +22,30 @@ class BgpFs2AclTool:
     def __init__(self, xr_client):
         self.xr_client = xr_client
 
-    def get_interfaces(self):
+    def get_interfaces(self, include_shutdown=True):
         """
         Returns XR interfaces dict, where a key is an 'interface ...' line, and a value is a list of applied
         features
-        :return: interfaces_dict
+        :param include_shutdown:
+        :return:
         """
         logger.info("Getting Interfaces")
         interfaces = self.xr_client.xrcmd("sh running interface")
         interfaces_dict = {}
         for i, line in enumerate(interfaces):
+            exclude = False
             if line.startswith('interface '):
-                interfaces_dict.update({line: []})
+                features_list = []
                 j = i + 1
                 while j < len(interfaces) and not interfaces[j].startswith('interface '):
-                    if line.strip() != '!':
-                        interfaces_dict[line].append(interfaces[j])
+                    if interfaces[j].strip() == 'shutdown' and not include_shutdown:
+                        exclude = True
+                        break
+                    if interfaces[j].strip() != '!':
+                        features_list.append(interfaces[j])
                     j += 1
+                if not exclude:
+                    interfaces_dict.update({line: features_list})
 
         return interfaces_dict
 
@@ -62,11 +69,13 @@ class BgpFs2AclTool:
                     break
         return result_dict
 
+    def get_flowspec_rules(self):
+        flowspec_ipv4 = self.xr_client.xrcmd('sh flowspec ipv4')
+
 
 def parse_flowspec_rules_ipv4(rules):
     fs_dict = {}
 
-    print('*' * 10)
     k = 0
 
     for i in range(0, len(rules), 2):
@@ -74,7 +83,6 @@ def parse_flowspec_rules_ipv4(rules):
             fs_dict[k] = rules[i].split(',')
             fs_dict[k][0] = fs_dict[k][0][fs_dict[k][0].find(':') + 1:]
             k += 1
-    pprint(fs_dict)
 
     return fs_dict
 
@@ -231,11 +239,6 @@ def constructed_acl(fs_rules, xr_client):
     logger.info("Config was applied on the device")
 
 
-def parse_interfaces(interfaces_with_acls):
-    interfaces_with_acls += ""
-    pass
-
-
 def filter_interfaces(interfaces, regexp):
     """Filter the list of interfaces by matching the regular expression."""
 
@@ -253,7 +256,7 @@ def filter_interfaces(interfaces, regexp):
 
 
 def conv_initiate(xr_client):
-    threading.Timer(frequency, conv_initiate, [xr_client]).start()
+    # threading.Timer(frequency, conv_initiate, [xr_client]).start()
     flowspec_ipv4 = xr_client.xrcmd("sh flowspec ipv4")
     if len(flowspec_ipv4) > 1:
         parsed_fs = parse_flowspec_rules_ipv4(flowspec_ipv4[1:])

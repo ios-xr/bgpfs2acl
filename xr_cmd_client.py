@@ -59,7 +59,7 @@ class XRCmdClient:
         :param xr_func: xr function from ztp_helper.sh (xrcmd or xrapply_string)
         :param xr_arg: argument string being passed to an xr function
         :return:
-        :raises: XRExecError due to failure
+        :raises: XRCmdExecError due to failure
         """
         xr_arg = xr_arg.strip('\n')
         cmd = 'sudo su - root -c "source /pkg/bin/ztp_helper.sh && {func} \'{arg}\'"'.format(func=xr_func, arg=xr_arg)
