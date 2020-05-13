@@ -18,6 +18,59 @@ logging.config.dictConfig(log_conf.LOG_CONFIG)
 logger = logging.getLogger(__name__)
 
 
+class FlowSpecRule:
+    def __init__(self, raw_flow, raw_actions):
+        self.raw_flow, self.raw_actions = self._validate(raw_flow, raw_actions)
+
+        for feature in self.raw_flow.split(','):
+            if 'Dest' in feature:
+                self._destination_ip = self._parse_destination(feature)
+            if
+
+
+    @staticmethod
+    def _validate(raw_flow, raw_actions):
+        if not raw_flow.strip().startswith("Flow"):
+            raise ValueError("Bad flow format: {}".format(raw_flow))
+
+        if not raw_actions.strip().startswith("Actions"):
+            raise ValueError("Bad actions format: {}".format(raw_actions))
+
+        return raw_flow, raw_actions
+
+    @staticmethod
+    def _parse_destination_ip(feature):
+        return feature.rsplit()
+
+    def _parse_proto(self):
+        pass
+
+
+class FlowSpec:
+    def __init__(self, raw_config):
+
+        self.raw_config = self._validate_config(raw_config)
+
+    def _parse_config(self):
+        self.rules = []
+        for i in range(0, len(self.raw_config), 2):
+            self.rules.append(FlowSpecRule(raw_flow=self.raw_config[i], raw_actions=self.raw_config[i+1]))
+
+
+    @staticmethod
+    def _validate_config(raw_config):
+        if len(raw_config) <= 1:
+            raise ValueError("Empty flowspec: {}".format(raw_config))
+
+        if raw_config[0].startswith("AFI:"):
+            raw_config = raw_config[1:]
+
+        for i in range(0, len(raw_config), 2):
+            if not (raw_config[i].strip().startswith("Flow") and raw_config[i+1].strip().startwith("Actions")):
+                raise ValueError("Bad flowspec format: {}".format(raw_config))
+
+
+
 class BgpFs2AclTool:
     def __init__(self, xr_client):
         self.xr_client = xr_client
@@ -72,6 +125,8 @@ class BgpFs2AclTool:
     def get_flowspec_rules(self):
         flowspec_ipv4 = self.xr_client.xrcmd('sh flowspec ipv4')
 
+        for i in range(0, len(flowspec_ipv4), 2):
+            flowspec_ipv4[i]
 
 def parse_flowspec_rules_ipv4(rules):
     fs_dict = {}
