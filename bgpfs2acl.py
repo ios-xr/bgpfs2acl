@@ -19,14 +19,16 @@ logger = logging.getLogger(__name__)
 
 
 class FlowSpecRule:
+    FLOW_FEATURE_NAMES = ('Dest', 'Proto', 'DPort', 'SPort', 'Length')
+
     def __init__(self, raw_flow, raw_actions):
         self.raw_flow, self.raw_actions = self._validate(raw_flow, raw_actions)
-
+        self.flow_features = {}
         for feature in self.raw_flow.split(','):
-            if 'Dest' in feature:
-                self._destination_ip = self._parse_destination(feature)
-            if
-
+            split_feature = feature.split(':')
+            feature_name = split_feature[-2]
+            feature_value = split_feature[-1]
+            self.flow_features.update({feature_name: feature_value})
 
     @staticmethod
     def _validate(raw_flow, raw_actions):
@@ -38,24 +40,23 @@ class FlowSpecRule:
 
         return raw_flow, raw_actions
 
-    @staticmethod
-    def _parse_destination_ip(feature):
-        return feature.rsplit()
+    def get_feature(self, feature_name):
+        if feature_name not in self.FLOW_FEATURE_NAMES:
+            raise ValueError("Wrong feature name: {}".format(feature_name))
 
-    def _parse_proto(self):
-        pass
+        return self.flow_features.get(feature_name, None)
 
 
 class FlowSpec:
     def __init__(self, raw_config):
-
         self.raw_config = self._validate_config(raw_config)
+        self.rules = self._parse_config()
 
     def _parse_config(self):
-        self.rules = []
+        rules = []
         for i in range(0, len(self.raw_config), 2):
-            self.rules.append(FlowSpecRule(raw_flow=self.raw_config[i], raw_actions=self.raw_config[i+1]))
-
+            rules.append(FlowSpecRule(raw_flow=self.raw_config[i], raw_actions=self.raw_config[i + 1]))
+        return rules
 
     @staticmethod
     def _validate_config(raw_config):
@@ -66,9 +67,8 @@ class FlowSpec:
             raw_config = raw_config[1:]
 
         for i in range(0, len(raw_config), 2):
-            if not (raw_config[i].strip().startswith("Flow") and raw_config[i+1].strip().startwith("Actions")):
+            if not (raw_config[i].strip().startswith("Flow") and raw_config[i + 1].strip().startwith("Actions")):
                 raise ValueError("Bad flowspec format: {}".format(raw_config))
-
 
 
 class BgpFs2AclTool:
@@ -122,11 +122,12 @@ class BgpFs2AclTool:
                     break
         return result_dict
 
-    def get_flowspec_rules(self):
+    def get_flowspec_ipv4(self):
         flowspec_ipv4 = self.xr_client.xrcmd('sh flowspec ipv4')
+        return FlowSpec(flowspec_ipv4)
 
-        for i in range(0, len(flowspec_ipv4), 2):
-            flowspec_ipv4[i]
+    def 
+
 
 def parse_flowspec_rules_ipv4(rules):
     fs_dict = {}
