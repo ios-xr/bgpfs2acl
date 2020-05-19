@@ -8,6 +8,8 @@ import sys
 import threading
 from pprint import pprint
 
+from enum import Enum
+
 from func_lib import parse_range, interface_handler, is_ipv4_subnet
 
 import logging.config
@@ -18,8 +20,124 @@ logging.config.dictConfig(log_conf.LOG_CONFIG)
 logger = logging.getLogger(__name__)
 
 
+class AccessListEntry:
+    class Command(Enum):
+        deny = 'deny'
+        permit = 'permit'
+
+    def __init__(self, command, seq_num=10, source_ip=None, protocol=None, ):
+        self
+
+    @classmethod
+    def from_flowspec_rule(cls, flowspec_rule, many=True):
+        init_args = {}
+
+        init_args['command'] = AccessListEntry._parse_flowspec_action(flowspec_rule.raw_actions)
+        init_args['protocol'] = AccessListEntry._parse_flowspec_protocol(
+            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.protocol)
+        )
+        init_args['source_ip'] = flowspec_rule.get_feature(FlowSpecRule.FeatureNames.source_ip)
+        init_args['source_port'] = AccessListEntry._parse_conditional_fs_type(
+            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.source_port)
+        )
+        init_args['destination_ip'] = flowspec_rule.get_feature(FlowSpecRule.FeatureNames.destination_ip)
+        init_args['destination_port'] = AccessListEntry._parse_conditional_fs_type(
+            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.destination_port)
+        )
+        init_args['packet_length'] = AccessListEntry._parse_conditional_fs_type(
+            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.length)
+        )
+
+    @staticmethod
+    def _parse_flowspec_action(action):
+        if FlowSpecRule.DENY_ACTION in action:
+            return AccessListEntry.Command.deny
+
+    @staticmethod
+    def _parse_flowspec_address(fs_address):
+        if not fs_address:
+            return None
+
+        prefix, mask = fs_address.split('/')
+        if mask == '32':
+            return 'host {}'.format(prefix)
+        else:
+            return fs_address
+
+    @staticmethod
+    def _parse_flowspec_protocol(fs_protocol):
+        if not fs_protocol:
+            return None
+
+        fs_protocol_list = fs_protocol.split('|')
+        acl_protocol_list = []
+        for cond in fs_protocol_list:
+            if '&' in cond:
+                min_proto, max_proto = cond.split('&')
+                min_proto = min_proto[2:]  # skipping '>='
+                max_proto = max_proto[2:]  # skipping '<='
+                for i in range(int(min_proto), int(max_proto)+1):
+                    acl_protocol_list.append(str(i))
+            else:
+                proto = cond[1:]  # skipping '='
+                acl_protocol_list.append(proto)
+
+        return acl_protocol_list
+
+    @staticmethod
+    def _parse_conditional_fs_type(fs_type_conditions):
+        if not fs_type_conditions:
+            return None
+
+        conditions_list = fs_type_conditions.split('|')
+
+        transformed_cond_list = []
+        for cond in conditions_list:
+            if '&' in cond:
+                min_border, max_border = cond.split('&')
+                min_border = min_border[2:]  # skipping '>='
+                max_border = max_border[2:]  # skipping '<='
+                transformed_cond_list.append('range {} {}'.format(min_border, max_border))
+            else:
+                cond = cond[1:]  # skipping '='
+                transformed_cond_list.append('eq {}'.format(cond))
+
+        return transformed_cond_list
+
+
+class AccessList:
+    MIN_SEQUENCE_NUM = 1
+    MAX_SEQUENCE_NUM = 2147483647
+
+    def __init__(self, name, seq_start=10, seq_step=10):
+        if len(name) > 64:
+            raise ValueError("Name {} is too long.".format(name))
+
+        if seq_start > AccessList.MAX_SEQUENCE_NUM or seq_start < 1:
+            raise ValueError("Bad sequence number: {}. Allowed range from {} to {}".format(
+                seq_start,
+                AccessList.MIN_SEQUENCE_NUM,
+                AccessList.MAX_SEQUENCE_NUM,
+            ))
+        self.name = name
+        self.seq_start = seq_start
+        self.seq_step = seq_step
+
+    @classmethod
+    def from_flowspec(cls, flowspec):
+        pass
+
+
 class FlowSpecRule:
-    FLOW_FEATURE_NAMES = ('Dest', 'Proto', 'DPort', 'SPort', 'Length')
+    class FeatureNames(Enum):
+        source_ip = 'Source'
+        destination_ip = 'Dest'
+        protocol = 'Proto'
+        destination_port = 'DPort'
+        source_port = 'SPort'
+        length = 'Length'
+
+    DENY_ACTION = 'Traffic-rate: 0 bps'
 
     def __init__(self, raw_flow, raw_actions):
         self.raw_flow, self.raw_actions = self._validate(raw_flow, raw_actions)
@@ -41,7 +159,7 @@ class FlowSpecRule:
         return raw_flow, raw_actions
 
     def get_feature(self, feature_name):
-        if feature_name not in self.FLOW_FEATURE_NAMES:
+        if feature_name not in FlowSpecRule.FLOW_FEATURE_NAMES:
             raise ValueError("Wrong feature name: {}".format(feature_name))
 
         return self.flow_features.get(feature_name, None)
@@ -125,8 +243,6 @@ class BgpFs2AclTool:
     def get_flowspec_ipv4(self):
         flowspec_ipv4 = self.xr_client.xrcmd('sh flowspec ipv4')
         return FlowSpec(flowspec_ipv4)
-
-    def 
 
 
 def parse_flowspec_rules_ipv4(rules):
