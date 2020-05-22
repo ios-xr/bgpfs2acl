@@ -25,28 +25,45 @@ class AccessListEntry:
         deny = 'deny'
         permit = 'permit'
 
-    def __init__(self, command, seq_num=10, source_ip=None, protocol=None, ):
-        self
+    def __init__(self, command, seq_num=10, protocol=None, source_ip=None, source_port=None, destination_ip=None,
+                 destination_port=None, packet_length=None):
+        
 
     @classmethod
     def from_flowspec_rule(cls, flowspec_rule, many=True):
+        result_acl_rules = []
+
         init_args = {}
 
         init_args['command'] = AccessListEntry._parse_flowspec_action(flowspec_rule.raw_actions)
-        init_args['protocol'] = AccessListEntry._parse_flowspec_protocol(
+        init_args['source_ip'] = flowspec_rule.get_feature(FlowSpecRule.FeatureNames.source_ip)
+        init_args['destination_ip'] = flowspec_rule.get_feature(FlowSpecRule.FeatureNames.destination_ip)
+
+        protocol_list = AccessListEntry._parse_flowspec_protocol(
             flowspec_rule.get_feature(FlowSpecRule.FeatureNames.protocol)
         )
-        init_args['source_ip'] = flowspec_rule.get_feature(FlowSpecRule.FeatureNames.source_ip)
-        init_args['source_port'] = AccessListEntry._parse_conditional_fs_type(
+        source_port_list = AccessListEntry._parse_conditional_fs_type(
             flowspec_rule.get_feature(FlowSpecRule.FeatureNames.source_port)
         )
-        init_args['destination_ip'] = flowspec_rule.get_feature(FlowSpecRule.FeatureNames.destination_ip)
-        init_args['destination_port'] = AccessListEntry._parse_conditional_fs_type(
+
+        destination_port_list = AccessListEntry._parse_conditional_fs_type(
             flowspec_rule.get_feature(FlowSpecRule.FeatureNames.destination_port)
         )
-        init_args['packet_length'] = AccessListEntry._parse_conditional_fs_type(
+
+        packet_length_list = AccessListEntry._parse_conditional_fs_type(
             flowspec_rule.get_feature(FlowSpecRule.FeatureNames.length)
         )
+
+        for protocol in protocol_list:
+            for source_port in source_port_list:
+                for destination_port in destination_port_list:
+                    for packet_length in packet_length_list:
+                        init_args['protocol'] = protocol
+                        init_args['source_port'] = source_port
+                        init_args['destination_port'] = destination_port
+                        init_args['packet_length'] = packet_length
+                       result_acl_rules.append(cls(**init_args))
+        return result_acl_rules
 
     @staticmethod
     def _parse_flowspec_action(action):
