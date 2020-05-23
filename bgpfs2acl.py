@@ -19,15 +19,75 @@ from xr_cmd_client import XRCmdClient
 logging.config.dictConfig(log_conf.LOG_CONFIG)
 logger = logging.getLogger(__name__)
 
+ASSIGNED_PROTOCOLS = {
+    'ahp':51,
+    'eigrp':88,
+    'esp':50,
+    'gre':47,
+    'icmp':1,
+    'igmp':2,
+    'igrp':9,
+    'ipinip':4,
+    'ipv4':61,
+    'nos':94,
+    'ospf':89,
+    'pcp':108,
+    'pim':103,
+    'sctp':132,
+    'tcp':6,
+    'udp':17,
+}
+
 
 class AccessListEntry:
     class Command(Enum):
         deny = 'deny'
         permit = 'permit'
+        remark = 'remark'
 
     def __init__(self, command, seq_num=10, protocol=None, source_ip=None, source_port=None, destination_ip=None,
                  destination_port=None, packet_length=None):
-        
+        if command not in [l.value for l in AccessListEntry.Command.__members__.values]:
+            raise ValueError('Passed wrong ACL command: {}'.format(command))
+        self.command = command
+
+        if not AccessList.MIN_SEQUENCE_NUM < int(seq_num) < AccessList.MAX_SEQUENCE_NUM:
+            raise ValueError('Passed wrong seq_num.')
+        self.seq_num = seq_num
+
+        if not (protocol is None or 0<int(protocol)<255 or protocol in ASSIGNED_PROTOCOLS):
+            raise ValueError('Passed wrong protocol value: {}'.format(protocol))
+        self.protocol = protocol
+
+        # TODO: validate ip arguments
+        self.source_ip = source_ip
+
+        self.source_port = self.validate_rangeable_features(source_port)
+
+        self.destination_ip = destination_ip
+
+        self.destination_port = self.validate_rangeable_features(destination_port)
+
+        self.packet_length = self.validate_rangeable_features(packet_length)
+
+
+    @staticmethod
+    def validate_rangeable_features(ports):
+        if ports is None:
+            return ports
+
+        if ports.startswith('range ') or ports.startswith('eq '):
+            check_ports = ports.split(' ')[1:]
+
+            check_ports = list(check_ports)  # insure that this is list
+
+            for port in  check_ports:
+                if not port.isdigit() or not 0<port<65536:
+                    raise ValueError('Passed wrong port value: {}'.format(ports))
+
+        return ports
+
+
 
     @classmethod
     def from_flowspec_rule(cls, flowspec_rule, many=True):
