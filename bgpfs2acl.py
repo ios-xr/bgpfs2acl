@@ -20,22 +20,22 @@ logging.config.dictConfig(log_conf.LOG_CONFIG)
 logger = logging.getLogger(__name__)
 
 ASSIGNED_PROTOCOLS = {
-    'ahp':51,
-    'eigrp':88,
-    'esp':50,
-    'gre':47,
-    'icmp':1,
-    'igmp':2,
-    'igrp':9,
-    'ipinip':4,
-    'ipv4':61,
-    'nos':94,
-    'ospf':89,
-    'pcp':108,
-    'pim':103,
-    'sctp':132,
-    'tcp':6,
-    'udp':17,
+    'ahp': 51,
+    'eigrp': 88,
+    'esp': 50,
+    'gre': 47,
+    'icmp': 1,
+    'igmp': 2,
+    'igrp': 9,
+    'ipinip': 4,
+    'ipv4': '',
+    'nos': 94,
+    'ospf': 89,
+    'pcp': 108,
+    'pim': 103,
+    'sctp': 132,
+    'tcp': 6,
+    'udp': 17,
 }
 
 
@@ -45,49 +45,81 @@ class AccessListEntry:
         permit = 'permit'
         remark = 'remark'
 
-    def __init__(self, command, seq_num=10, protocol=None, source_ip=None, source_port=None, destination_ip=None,
-                 destination_port=None, packet_length=None):
+    def __init__(self, command, seq_num, protocol=None, source_ip=None, source_port=None, destination_ip=None,
+                 destination_port=None, packet_length=None, commentary=None):
         if command not in [l.value for l in AccessListEntry.Command.__members__.values]:
             raise ValueError('Passed wrong ACL command: {}'.format(command))
-        self.command = command
+        self._command = command
+
+        if command == AccessListEntry.Command.remark and commentary is None:
+            raise ValueError("remark: no commentary provided.")
+
+        self._commentary = commentary
 
         if not AccessList.MIN_SEQUENCE_NUM < int(seq_num) < AccessList.MAX_SEQUENCE_NUM:
-            raise ValueError('Passed wrong seq_num.')
-        self.seq_num = seq_num
+            raise ValueError('Passed wrong seq_num: {}'.format(seq_num))
+        self._seq_num = seq_num
 
-        if not (protocol is None or 0<int(protocol)<255 or protocol in ASSIGNED_PROTOCOLS):
+        if protocol is None:
+            self._protocol = 'ipv4'
+
+        elif (isinstance(protocol, int) and not 0 < int(protocol) < 255) or (protocol not in ASSIGNED_PROTOCOLS):
             raise ValueError('Passed wrong protocol value: {}'.format(protocol))
-        self.protocol = protocol
+        self._protocol = protocol
 
         # TODO: validate ip arguments
-        self.source_ip = source_ip
+        self._source_ip = self.validate_ip(source_ip)
+        self._source_port = self.validate_rangeable_features(source_port)
 
-        self.source_port = self.validate_rangeable_features(source_port)
+        self._destination_ip = self.validate_ip(destination_ip)
+        self._destination_port = self.validate_rangeable_features(destination_port)
 
-        self.destination_ip = destination_ip
+        self._packet_length = self.validate_rangeable_features(packet_length)
 
-        self.destination_port = self.validate_rangeable_features(destination_port)
+    def _generate_rule(self):
+        if self._command == AccessListEntry.Command.remark:
+            return ' '.join([self._seq_num, self._command, self._commentary])
 
-        self.packet_length = self.validate_rangeable_features(packet_length)
+        result_rule = [self._seq_num, self._command, self._protocol, self._source_ip, self._source_port,
+                       self._destination_ip, self._destination_port, self._packet_length]  # order is important
 
+        result_rule = [i for i in result_rule if i is not None]  # removed all empty fields
+
+        return ' '.join(result_rule)
+
+    @classmethod
+    def create_remark(cls, sec_num, description):
+        return cls(AccessListEntry.Command.remark, seq_num=sec_num, description=description)
+
+    @property
+    def rule(self):
+        return self._rule
 
     @staticmethod
-    def validate_rangeable_features(ports):
-        if ports is None:
-            return ports
+    def validate_rangeable_features(values_list):
+        if values_list is None:
+            return values_list
 
-        if ports.startswith('range ') or ports.startswith('eq '):
-            check_ports = ports.split(' ')[1:]
+        if values_list.startswith('range ') or values_list.startswith('eq '):
+            to_check = values_list.split(' ')[1:]
+            to_check = list(to_check)  # to be sure that this is list
 
-            check_ports = list(check_ports)  # insure that this is list
+            for value in to_check:
+                if not value.isdigit() or not 0 < int(value) < 65536:
+                    raise ValueError('Passed wrong feature value: {}'.format(values_list))
 
-            for port in  check_ports:
-                if not port.isdigit() or not 0<port<65536:
-                    raise ValueError('Passed wrong port value: {}'.format(ports))
+        return values_list
 
-        return ports
+    @staticmethod
+    def validate_ip(ip):
+        if ip is None:
+            return 'any'
 
+        ip_components = ip.split('/')
+        if len(ip_components) == 2 and ip_components[1] == '32':
+           return 'host {}'.format(ip_components[0])
 
+        return ip
 
     @classmethod
     def from_flowspec_rule(cls, flowspec_rule, many=True):
@@ -122,7 +154,7 @@ class AccessListEntry:
                         init_args['source_port'] = source_port
                         init_args['destination_port'] = destination_port
                         init_args['packet_length'] = packet_length
-                       result_acl_rules.append(cls(**init_args))
+                    result_acl_rules.append(cls(**init_args))
         return result_acl_rules
 
     @staticmethod
@@ -153,7 +185,7 @@ class AccessListEntry:
                 min_proto, max_proto = cond.split('&')
                 min_proto = min_proto[2:]  # skipping '>='
                 max_proto = max_proto[2:]  # skipping '<='
-                for i in range(int(min_proto), int(max_proto)+1):
+                for i in range(int(min_proto), int(max_proto) + 1):
                     acl_protocol_list.append(str(i))
             else:
                 proto = cond[1:]  # skipping '='
