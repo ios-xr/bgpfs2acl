@@ -6,6 +6,7 @@ import re
 
 import sys
 import threading
+from collections import OrderedDict
 from pprint import pprint
 
 from enum import Enum
@@ -45,9 +46,9 @@ class AccessListEntry:
         permit = 'permit'
         remark = 'remark'
 
-    def __init__(self, command, seq_num, protocol=None, source_ip=None, source_port=None, destination_ip=None,
+    def __init__(self, command, protocol=None, source_ip=None, source_port=None, destination_ip=None,
                  destination_port=None, packet_length=None, commentary=None):
-        if command not in [l.value for l in AccessListEntry.Command.__members__.values]:
+        if command not in [c.value for c in AccessListEntry.Command.__members__.values]:
             raise ValueError('Passed wrong ACL command: {}'.format(command))
         self._command = command
 
@@ -56,10 +57,6 @@ class AccessListEntry:
 
         self._commentary = commentary
 
-        if not AccessList.MIN_SEQUENCE_NUM < int(seq_num) < AccessList.MAX_SEQUENCE_NUM:
-            raise ValueError('Passed wrong seq_num: {}'.format(seq_num))
-        self._seq_num = seq_num
-
         if protocol is None:
             self._protocol = 'ipv4'
 
@@ -67,7 +64,6 @@ class AccessListEntry:
             raise ValueError('Passed wrong protocol value: {}'.format(protocol))
         self._protocol = protocol
 
-        # TODO: validate ip arguments
         self._source_ip = self.validate_ip(source_ip)
         self._source_port = self.validate_rangeable_features(source_port)
 
@@ -78,9 +74,9 @@ class AccessListEntry:
 
     def _generate_rule(self):
         if self._command == AccessListEntry.Command.remark:
-            return ' '.join([self._seq_num, self._command, self._commentary])
+            return ' '.join([self._command, self._commentary])
 
-        result_rule = [self._seq_num, self._command, self._protocol, self._source_ip, self._source_port,
+        result_rule = [self._command, self._protocol, self._source_ip, self._source_port,
                        self._destination_ip, self._destination_port, self._packet_length]  # order is important
 
         result_rule = [i for i in result_rule if i is not None]  # removed all empty fields
@@ -88,12 +84,12 @@ class AccessListEntry:
         return ' '.join(result_rule)
 
     @classmethod
-    def create_remark(cls, sec_num, description):
-        return cls(AccessListEntry.Command.remark, seq_num=sec_num, description=description)
+    def create_remark(cls, commentary):
+        return cls(AccessListEntry.Command.remark, commentary=commentary)
 
     @property
     def rule(self):
-        return self._rule
+        return self._generate_rule()
 
     @staticmethod
     def validate_rangeable_features(values_list):
@@ -117,7 +113,7 @@ class AccessListEntry:
 
         ip_components = ip.split('/')
         if len(ip_components) == 2 and ip_components[1] == '32':
-           return 'host {}'.format(ip_components[0])
+            return 'host {}'.format(ip_components[0])
 
         return ip
 
@@ -231,10 +227,47 @@ class AccessList:
         self.name = name
         self.seq_start = seq_start
         self.seq_step = seq_step
+        self.seq_last = self.seq_start
 
-    @classmethod
-    def from_flowspec(cls, flowspec):
-        pass
+        self._entries = OrderedDict()
+
+    def append_flowspec(self, flowspec, fs_start_seq=None):
+        if fs_start_seq is None:
+            fs_start_seq = self.seq_last + self.seq_step
+
+        to_append = [AccessListEntry.create_remark("FLOWSPEC_RULES")]
+        for fs_rule in flowspec:
+            access_list_entries = AccessListEntry.from_flowspec_rule(fs_rule)
+            entries_length = len(access_list_entries)
+            if entries_length > 1:
+                to_append.append(
+                    AccessListEntry.create_remark(
+                        "Next {} rules are equal to FS rule \"{}\"".format(entries_length, fs_rule.raw_flow)
+                    )
+                )
+            to_append.extend(access_list_entries)
+
+        after_append_last_seq = fs_start_seq + len(to_append) * self.seq_step
+        if after_append_last_seq > self.MAX_SEQUENCE_NUM:
+            raise IndexError(
+                "Last appended sequence {} exceed maximum allowed {}".format(after_append_last_seq,
+                                                                             self.MAX_SEQUENCE_NUM)
+            )
+
+        permit_any_rule = None
+        if 'permit ipv4 any any' in self._entries[self.seq_last]:
+            permit_any_rule = self._entries.pop(self.seq_last)
+            self.seq_last = self._entries.keys()[-1]
+
+        current_seq = fs_start_seq
+        for entry in to_append:
+            self.seq_last = current_seq
+            self._entries.update({self.seq_last: entry})
+            current_seq += self.seq_step
+
+        if permit_any_rule:
+            self.seq_last += self.seq_step
+            self._entries.update({self.seq_last: permit_any_rule})
 
 
 class FlowSpecRule:
