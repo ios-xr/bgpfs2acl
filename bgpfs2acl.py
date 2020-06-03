@@ -2,6 +2,7 @@
 from __future__ import print_function
 
 import argparse
+import hashlib
 import re
 
 import sys
@@ -330,10 +331,29 @@ class FlowSpec:
             if not (raw_config[i].strip().startswith("Flow") and raw_config[i + 1].strip().startwith("Actions")):
                 raise ValueError("Bad flowspec format: {}".format(raw_config))
 
+    def is_empty(self):
+        return bool(len(self.rules))
+
+    @property
+    def config(self):
+        return '\n'.join(self.raw_config)
+
+    @property
+    def md5(self):
+        return hashlib.md5(self.config())
+
 
 class BgpFs2AclTool:
-    def __init__(self, xr_client):
+    def __init__(self, xr_client, default_acl_name,):
         self.xr_client = xr_client
+
+        if not (0 < default_acl_name <= 65):
+            raise ValueError('ACL name {} is out length range'.format(default_acl_name))
+        self.default_acl_name = default_acl_name
+
+        self.cached_fs_md5 = None
+        self.cached_acl_md5 = None
+        self.cached_interfaces_md5 = None
 
     def get_interfaces(self, include_shutdown=True):
         """
@@ -382,9 +402,78 @@ class BgpFs2AclTool:
                     break
         return result_dict
 
-    def get_flowspec_ipv4(self):
+    def get_flowspec(self):
         flowspec_ipv4 = self.xr_client.xrcmd('sh flowspec ipv4')
-        return FlowSpec(flowspec_ipv4)
+        if len(flowspec_ipv4) > 1:
+            return FlowSpec(flowspec_ipv4)
+
+        return None
+
+    def get_access_lists(self):
+        return None
+
+    def apply_conf(self, conf):
+        return self.xr_client.xrapply_string(conf)
+
+def get_acl_md5(access_lists):
+    acl_raw_str = ''
+    for acl in access_lists:
+        acl_raw_str = '\n'.join([acl_raw_str, acl.rules()])
+    return hashlib.md5(acl_raw_str)
+
+def get_fs_md5(fs):
+    if fs:
+        return hashlib.md5('\n'.join(fs.raw_config))
+
+def run(bgpfs2acltool):
+    to_apply = ''
+    flowspec = bgpfs2acltool.get_flowspec()
+    access_lists = bgpfs2acltool.get_access_lists()
+
+    if flowspec is None:
+        if bgpfs2acltool.cached_fs_md5 is None:
+            pass
+        elif bgpfs2acltool.cached_acl_md5 is not None:
+            new_acl_conf = ''
+            for acl in access_lists:
+                remove_fs_conf = acl.remove_flowspec()
+                new_acl_conf = ''.join([new_acl_conf, acl.rule()])
+                to_apply = ''.join([to_apply, remove_fs_conf])
+            if to_apply != '':
+                bgpfs2acltool.apply_conf(to_apply)
+                bgpfs2acltool.cached_acl_md5 = hashlib.md5(new_acl_conf)
+
+        bgpfs2acltool.cached_fs_md5 = None
+
+    elif flowspec.md5 != bgpfs2acltool.cached_fs_md5:
+        interfaces = bgpfs2acltool.get_interfaces(include_shutdown=False)
+        filtered_interfaces = bgpfs2acltool.filter_interfaces(interfaces, '^interface (Gig|Ten|Twe|Fo|Hu).*')
+
+        applied_acls = set()
+        pat = re.compile(r'ipv4 access-group (.*) ingress')
+        for interface, feature_list in filtered_interfaces.iteritems():
+            for feature in feature_list:
+                f_match = pat.match(feature)
+                if f_match:
+
+
+
+
+
+
+
+
+
+
+    if flowspec:
+        fs_raw = str(flowspec.raw_config)
+        fs_md5 = hashlib.md5(fs_raw).hexdigest()
+        if fs_md5 == bgpfs2acltool.cached_fs_md5:
+
+
+
+
+
 
 
 def parse_flowspec_rules_ipv4(rules):
@@ -600,7 +689,7 @@ if __name__ == "__main__":
     parser.add_argument("-f", "--frequency", dest='frequency', default=30, type=int,
                         help="set script execution frequency, default value 30 sec")
     parser.add_argument("--line_start_number", help="Define the first line to add generated ACEs",
-                        type=int, default=1200)
+                        type=int, default=100500)
     parser.add_argument("--revert", help="Start script in clean up mode", action="store_true")
     parser.add_argument("--default_acl_name", type=str, default='bgpfs2acl-ipv4',
                         dest='default_acl_name', help="Define default ACL name")
