@@ -22,24 +22,58 @@ from xr_cmd_client import XRCmdClient
 logging.config.dictConfig(log_conf.LOG_CONFIG)
 logger = logging.getLogger(__name__)
 
-ASSIGNED_PROTOCOLS = {
-    'ahp': 51,
-    'eigrp': 88,
-    'esp': 50,
-    'gre': 47,
-    'icmp': 1,
-    'igmp': 2,
-    'igrp': 9,
-    'ipinip': 4,
-    'ipv4': '',
-    'nos': 94,
-    'ospf': 89,
-    'pcp': 108,
-    'pim': 103,
-    'sctp': 132,
-    'tcp': 6,
-    'udp': 17,
+ALLOWED_PROTOCOLS = {
+    'icmp': '1',
+    'tcp': '6',
+    'udp': '17',
 }
+
+ICMP_TYPE_CODENAMES = (
+    'administratively-prohibited',
+    'alternate-address',
+    'conversion-error',
+    'dod-host-prohibited',
+    'dod-net-prohibited',
+    'echo',
+    'echo-reply',
+    'general-parameter-problem',
+    'host-isolated',
+    'host-precedence-unreachable',
+    'host-redirect',
+    'host-tos-redirect',
+    'host-tos-unreachable',
+    'host-unknown',
+    'host-unreachable',
+    'information-reply',
+    'information-request',
+    'mask-reply',
+    'mask-request',
+    'mobile-redirect',
+    'net-redirect',
+    'net-tos-redirect',
+    'net-tos-unreachable',
+    'net-unreachable',
+    'network-unknown',
+    'no-room-for-option',
+    'option-missing',
+    'packet-too-big',
+    'parameter-problem',
+    'port-unreachable',
+    'precedence-unreachable',
+    'protocol-unreachable',
+    'reassembly-timeout',
+    'redirect',
+    'router-advertisement',
+    'router-solicitation',
+    'source-quench',
+    'source-route-failed',
+    'time-exceeded',
+    'timestamp-reply',
+    'timestamp-request',
+    'traceroute',
+    'ttl-exceeded',
+    'unreachable',
+)
 
 
 class AccessListEntry:
@@ -48,8 +82,8 @@ class AccessListEntry:
         permit = 'permit'
         remark = 'remark'
 
-    def __init__(self, command, protocol=None, source_ip=None, source_port=None, destination_ip=None,
-                 destination_port=None, packet_length=None, commentary=None):
+    def __init__(self, command, protocol, source_ip=None, source_port=None, destination_ip=None,
+                 destination_port=None, icmp_type=None, icmp_code=None, packet_length=None, commentary=None):
         if command not in [c.value for c in AccessListEntry.Command.__members__.values]:
             raise ValueError('Passed wrong ACL command: {}'.format(command))
         self._command = command
@@ -60,9 +94,10 @@ class AccessListEntry:
         self._commentary = commentary
 
         if protocol is None:
-            self._protocol = 'ipv4'
+            raise ValueError('Protocol is required. Allowed protocols: UDP, TCP, ICMP')
 
-        elif (isinstance(protocol, int) and not 0 < int(protocol) < 255) or (protocol not in ASSIGNED_PROTOCOLS):
+        protocol = str(protocol)
+        if (protocol not in ALLOWED_PROTOCOLS.values()) or (protocol not in ALLOWED_PROTOCOLS.keys()):
             raise ValueError('Passed wrong protocol value: {}'.format(protocol))
         self._protocol = protocol
 
@@ -72,6 +107,18 @@ class AccessListEntry:
         self._destination_ip = self.validate_ip(destination_ip)
         self._destination_port = self.validate_rangeable_features(destination_port)
 
+        if self._protocol in ('icmp', '1') and icmp_type is not None:
+            if ((isinstance(icmp_type, int) or icmp_type.isdigit()) and not 0 < int(icmp_type) < 256) \
+                or icmp_type not in ICMP_TYPE_CODENAMES:
+                raise ValueError('Wrong icmp_type value: {}'.format(icmp_type))
+
+        self._icmp_type = icmp_type
+
+        if self._icmp_type and icmp_code is not None:
+            if (isinstance(icmp_code, int) or icmp_code.isdigit()) and not 0 < int(icmp_code) < 256:
+                raise ValueError('Wrong icmp_code value: {}'.format(icmp_code))
+        self._icmp_code = icmp_code
+
         self._packet_length = self.validate_rangeable_features(packet_length)
 
     def _generate_rule(self):
@@ -79,9 +126,10 @@ class AccessListEntry:
             return ' '.join([self._command, self._commentary])
 
         result_rule = [self._command, self._protocol, self._source_ip, self._source_port,
-                       self._destination_ip, self._destination_port, self._packet_length]  # order is important
+                       self._destination_ip, self._destination_port, self._icmp_type, self._icmp_code,
+                       self._packet_length]  # order is important
 
-        result_rule = [i for i in result_rule if i is not None]  # removed all empty fields
+        result_rule = [str(i) for i in result_rule if i is not None]  # removed all empty fields
 
         return ' '.join(result_rule)
 
@@ -120,7 +168,6 @@ class AccessListEntry:
 
         return res
 
-
     @classmethod
     def from_raw_ace(cls, ace):
         init_args = {}
@@ -139,11 +186,16 @@ class AccessListEntry:
         init_args['destination_ip'] = cls._parse_ip(features_list)
         init_args['destination_port'] = cls._parse_range(features_list)
 
+        if init_args['protocol'] == 'icmp':
+            if features_list[0].isdigit() or features_list[0] in ICMP_TYPE_CODENAMES:
+                init_args['icmp_type'] = features_list.pop(0)
+                if features_list[0].isdigit():
+                    init_args['icmp_code'] = features_list.pop(0)
+
         if features_list[0] == 'packet-length':
             init_args['packet_length'] = ' '.join([features_list.pop(0), cls._parse_range(features_list)])
 
         return cls(**init_args)
-
 
     @property
     def rule(self):
@@ -202,6 +254,19 @@ class AccessListEntry:
         packet_length_list = AccessListEntry._parse_conditional_fs_type(
             flowspec_rule.get_feature(FlowSpecRule.FeatureNames.length)
         )
+
+        init_args['icmp_type'] = AccessListEntry._parse_conditional_fs_type(
+            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.icmp_type)
+        )
+
+        init_args['icmp_code'] = AccessListEntry._parse_conditional_fs_type(
+            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.icmp_type)
+        )
+
+        #  ACL doesn't support ranges of icmp types/codes, therefore skipping
+        if (init_args['icmp_type'] and len(init_args['icmp_type']) > 1) \
+                or (init_args['icmp_code'] and len(init_args['icmp_code']) > 1):
+            return []
 
         for protocol in protocol_list:
             for source_port in source_port_list:
@@ -332,7 +397,6 @@ class AccessList:
 
     def add_ace(self, ace, seq=None):
 
-
     @classmethod
     def from_raw_aces(self, name, raw_ace_list):
 
@@ -345,6 +409,8 @@ class FlowSpecRule:
         destination_port = 'DPort'
         source_port = 'SPort'
         length = 'Length'
+        icmp_type = 'ICMPType'
+        icmp_code = 'ICMPCode'
 
     DENY_ACTION = 'Traffic-rate: 0 bps'
 
@@ -368,7 +434,7 @@ class FlowSpecRule:
         return raw_flow, raw_actions
 
     def get_feature(self, feature_name):
-        if feature_name not in FlowSpecRule.FLOW_FEATURE_NAMES:
+        if feature_name not in [f.value for f in FlowSpecRule.FeatureNames.__members__.values]:
             raise ValueError("Wrong feature name: {}".format(feature_name))
 
         return self.flow_features.get(feature_name, None)
@@ -491,9 +557,6 @@ class BgpFs2AclTool:
             elif acl_name is not None:
                 acls[acl_name].append(line)
         return acls
-
-
-
 
     def apply_conf(self, conf):
         return self.xr_client.xrapply_string(conf)
