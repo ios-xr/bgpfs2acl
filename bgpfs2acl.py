@@ -340,7 +340,7 @@ class AccessList:
     MIN_SEQUENCE_NUM = 1
     MAX_SEQUENCE_NUM = 2147483647
 
-    def __init__(self, name, seq_start=10, seq_step=10):
+    def __init__(self, name, seq_step=10):
         if len(name) > 64:
             raise ValueError("Name {} is too long.".format(name))
 
@@ -351,54 +351,94 @@ class AccessList:
                 AccessList.MAX_SEQUENCE_NUM,
             ))
         self.name = name
-        self.seq_start = seq_start
-        self.seq_step = seq_step
-        self.seq_last = self.seq_start
+        self._seq_step = seq_step
+        self._seq_last = None
 
-        self._entries = OrderedDict()
+        self._statements = OrderedDict()
 
     def apply_flowspec(self, flowspec, fs_start_seq=None):
-        if fs_start_seq is None:
-            fs_start_seq = self.seq_last + self.seq_step
+        if flowspec.is_empty():
+            return
 
-        to_append = [AccessListEntry.create_remark("FLOWSPEC_RULES")]
+        to_append = [AccessListEntry.create_remark("FLOWSPEC RULES BEGIN").rule]
         for fs_rule in flowspec:
-            access_list_entries = AccessListEntry.from_flowspec_rule(fs_rule)
+            access_list_entries = [ace.rule for ace in AccessListEntry.from_flowspec_rule(fs_rule)]
             entries_length = len(access_list_entries)
             if entries_length > 1:
                 to_append.append(
                     AccessListEntry.create_remark(
                         "Next {} rules are equal to FS rule \"{}\"".format(entries_length, fs_rule.raw_flow)
-                    )
+                    ).rule
                 )
             to_append.extend(access_list_entries)
+        to_append.append(AccessListEntry.create_remark("FLOWSPEC RULES END").rule)
 
-        after_append_last_seq = fs_start_seq + len(to_append) * self.seq_step
+        after_append_last_seq = fs_start_seq + len(to_append) * self._seq_step
         if after_append_last_seq > self.MAX_SEQUENCE_NUM:
             raise IndexError(
                 "Last appended sequence {} exceed maximum allowed {}".format(after_append_last_seq,
                                                                              self.MAX_SEQUENCE_NUM)
             )
 
-        permit_any_rule = None
-        if 'permit ipv4 any any' in self._entries[self.seq_last]:
-            permit_any_rule = self._entries.pop(self.seq_last)
-            self.seq_last = self._entries.keys()[-1]
+        last_permit_ace = None
+        if 'permit ipv4 any any' in self._statements[self._seq_last]:
+            last_permit_ace = self._statements.pop(self._seq_last)
+            self._seq_last = self._statements.keys()[-1]
 
-        current_seq = fs_start_seq
+        if fs_start_seq is None or fs_start_seq < self._seq_last:
+            fs_start_seq = self._seq_last + self._seq_step
+
+        next_seq = fs_start_seq
         for entry in to_append:
-            self.seq_last = current_seq
-            self._entries.update({self.seq_last: entry})
-            current_seq += self.seq_step
+            self._seq_last = next_seq
+            self._statements.update({self._seq_last: entry})
+            next_seq += self._seq_step
 
-        if permit_any_rule:
-            self.seq_last += self.seq_step
-            self._entries.update({self.seq_last: permit_any_rule})
+        if last_permit_ace:
+            self._seq_last += self._seq_step
+            self._statements.update({self._seq_last: last_permit_ace})
 
-    def add_ace(self, ace, seq=None):
+    def add_statement(self, statement, seq=None):
+        statement_pat = re.compile(r'(deny|remark|permit) .+')
+        if not statement_pat.match(statement):
+            raise ValueError('Wrong statement format: {}'.format(statement))
+
+        if seq is None:
+            if self._seq_last is None:
+                seq = self._seq_step
+            else:
+                seq = self._seq_last + self._seq_step
+
+        seq = int(seq)
+
+        if seq > self.MAX_SEQUENCE_NUM:
+            raise IndexError('Sequence index out of range: {}. Max: {}'.format(seq, self.MAX_SEQUENCE_NUM))
+
+        self._statements.update({seq: statement})
+        if seq > self._seq_last:
+            self._seq_last = seq
+
+
 
     @classmethod
-    def from_raw_aces(self, name, raw_ace_list):
+    def from_raw_config(cls, raw_config_list):
+        if len(raw_config_list) <= 1:
+            raise ValueError('Passed empty config list.')
+
+        acl_name_pat = re.compile(r'ipv[4,6] access-list ([^\s]{1,64})')
+        acls = []
+        next_acl = None
+        for line in raw_config_list:
+            acl_title = acl_name_pat.match(line)
+            if acl_title:
+                next_acl = cls(acl_title.group(1))
+            elif line == '!' and next_acl is not None:
+                acls.append(next_acl)
+                next_acl = None
+            elif next_acl is not None:
+                seq, statement = line.split(' ', 1)
+                next_acl.add_statement(line, seq)
+        return acls
 
 
 class FlowSpecRule:
@@ -538,25 +578,20 @@ class BgpFs2AclTool:
 
     def get_flowspec(self):
         flowspec_ipv4 = self.xr_client.xrcmd('sh flowspec ipv4')
-        if len(flowspec_ipv4) > 1:
-            return FlowSpec(flowspec_ipv4)
 
-        return None
+        if len(flowspec_ipv4) <= 1:
+            return None
+
+        return FlowSpec(flowspec_ipv4)
 
     def get_access_lists(self):
         acls_raw = self.xr_client.xrcmd('sh run ipv4 access-list')
+        if len(acls_raw) <= 1:
+            return None
 
-        acls = defaultdict(list)
-
-        acl_name = None
-        for line in acls_raw:
-            if 'access-list' in line:
-                acl_name = line.rsplit(' ', 1)[1]
-            elif line == '!':
-                acl_name = None
-            elif acl_name is not None:
-                acls[acl_name].append(line)
+        acls = AccessList.from_raw_config(acls_raw)
         return acls
+
 
     def apply_conf(self, conf):
         return self.xr_client.xrapply_string(conf)
