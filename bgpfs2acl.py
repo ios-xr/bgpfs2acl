@@ -9,6 +9,7 @@ import socket
 import sys
 import threading
 from collections import OrderedDict, defaultdict
+from sortedcontainers import SortedDict
 from pprint import pprint
 
 from enum import Enum
@@ -109,7 +110,7 @@ class AccessListEntry:
 
         if self._protocol in ('icmp', '1') and icmp_type is not None:
             if ((isinstance(icmp_type, int) or icmp_type.isdigit()) and not 0 < int(icmp_type) < 256) \
-                or icmp_type not in ICMP_TYPE_CODENAMES:
+                    or icmp_type not in ICMP_TYPE_CODENAMES:
                 raise ValueError('Wrong icmp_type value: {}'.format(icmp_type))
 
         self._icmp_type = icmp_type
@@ -344,59 +345,56 @@ class AccessList:
         if len(name) > 64:
             raise ValueError("Name {} is too long.".format(name))
 
-        if seq_start > AccessList.MAX_SEQUENCE_NUM or seq_start < 1:
-            raise ValueError("Bad sequence number: {}. Allowed range from {} to {}".format(
-                seq_start,
-                AccessList.MIN_SEQUENCE_NUM,
-                AccessList.MAX_SEQUENCE_NUM,
-            ))
         self.name = name
         self._seq_step = seq_step
-        self._seq_last = None
-
-        self._statements = OrderedDict()
+        self._statements = SortedDict()
+        self._fs_start = None
+        self._fs_end = None
 
     def apply_flowspec(self, flowspec, fs_start_seq=None):
         if flowspec.is_empty():
             return
 
-        to_append = [AccessListEntry.create_remark("FLOWSPEC RULES BEGIN").rule]
+        if self._fs_start:
+            self.remove_flowspec()
+
+        to_apply = [AccessListEntry.create_remark(
+            "FLOWSPEC RULES BEGIN. Do not add statements below this. Added automatically.").rule]
         for fs_rule in flowspec:
             access_list_entries = [ace.rule for ace in AccessListEntry.from_flowspec_rule(fs_rule)]
             entries_length = len(access_list_entries)
             if entries_length > 1:
-                to_append.append(
+                to_apply.append(
                     AccessListEntry.create_remark(
                         "Next {} rules are equal to FS rule \"{}\"".format(entries_length, fs_rule.raw_flow)
                     ).rule
                 )
-            to_append.extend(access_list_entries)
-        to_append.append(AccessListEntry.create_remark("FLOWSPEC RULES END").rule)
+            to_apply.extend(access_list_entries)
+        to_apply.append(AccessListEntry.create_remark("FLOWSPEC RULES END").rule)
 
-        after_append_last_seq = fs_start_seq + len(to_append) * self._seq_step
-        if after_append_last_seq > self.MAX_SEQUENCE_NUM:
+        last_seq, last_statement = self._statements.peekitem()
+
+        last_permit_ace = 'permit ipv4 any any'
+        if last_statement == last_permit_ace:
+            self._statements.popitem()
+            last_seq -= 1
+
+        to_apply.append(last_permit_ace)
+
+        if fs_start_seq is None or fs_start_seq < last_seq:
+            fs_start_seq = last_seq + self._seq_step
+
+        after_apply_last_seq = fs_start_seq + len(to_apply)
+        if after_apply_last_seq > self.MAX_SEQUENCE_NUM:
             raise IndexError(
-                "Last appended sequence {} exceed maximum allowed {}".format(after_append_last_seq,
-                                                                             self.MAX_SEQUENCE_NUM)
+                "Add sequence {} exceed maximum allowed {}".format(after_apply_last_seq,
+                                                                   self.MAX_SEQUENCE_NUM)
             )
 
-        last_permit_ace = None
-        if 'permit ipv4 any any' in self._statements[self._seq_last]:
-            last_permit_ace = self._statements.pop(self._seq_last)
-            self._seq_last = self._statements.keys()[-1]
-
-        if fs_start_seq is None or fs_start_seq < self._seq_last:
-            fs_start_seq = self._seq_last + self._seq_step
-
-        next_seq = fs_start_seq
-        for entry in to_append:
-            self._seq_last = next_seq
-            self._statements.update({self._seq_last: entry})
-            next_seq += self._seq_step
-
-        if last_permit_ace:
-            self._seq_last += self._seq_step
-            self._statements.update({self._seq_last: last_permit_ace})
+        cur_seq = fs_start_seq
+        for entry in to_apply:
+            self._statements.update({cur_seq: entry})
+            cur_seq += 1
 
     def add_statement(self, statement, seq=None):
         statement_pat = re.compile(r'(deny|remark|permit) .+')
@@ -404,22 +402,21 @@ class AccessList:
             raise ValueError('Wrong statement format: {}'.format(statement))
 
         if seq is None:
-            if self._seq_last is None:
+            if self.is_empty():
                 seq = self._seq_step
             else:
-                seq = self._seq_last + self._seq_step
+                seq = self._statements.peekitem()[0] + self._seq_step
 
         seq = int(seq)
 
         if seq > self.MAX_SEQUENCE_NUM:
-            raise IndexError('Sequence index out of range: {}. Max: {}'.format(seq, self.MAX_SEQUENCE_NUM))
+            raise IndexError('Sequence index is out of range: {}. Max: {}'.format(seq, self.MAX_SEQUENCE_NUM))
 
         self._statements.update({seq: statement})
-        if seq > self._seq_last:
-            self._seq_last = seq
 
-
-
+    def is_empty(self):
+        return len(self._statements) == 0
+    
     @classmethod
     def from_raw_config(cls, raw_config_list):
         if len(raw_config_list) <= 1:
@@ -591,7 +588,6 @@ class BgpFs2AclTool:
 
         acls = AccessList.from_raw_config(acls_raw)
         return acls
-
 
     def apply_conf(self, conf):
         return self.xr_client.xrapply_string(conf)
