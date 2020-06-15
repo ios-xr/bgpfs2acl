@@ -8,13 +8,10 @@ import socket
 
 import sys
 import threading
-from collections import OrderedDict, defaultdict
 from sortedcontainers import SortedDict
 from pprint import pprint
 
 from enum import Enum
-
-from func_lib import parse_range, interface_handler, is_ipv4_subnet
 
 import logging.config
 import log_conf
@@ -171,35 +168,6 @@ class AccessListEntry:
             del features_list[:3]
 
         return res
-
-    @classmethod
-    def from_raw_ace(cls, ace):
-        init_args = {}
-        features_list = ace.split(' ')
-
-        if features_list[0].isdigit():
-            features_list.pop(0)
-
-        if features_list[0] == cls.Command.remark:
-            return cls.create_remark(features_list[1])
-
-        init_args['command'] = features_list.pop(0)
-        init_args['protocol'] = features_list.pop(0)
-        init_args['source_ip'] = cls._parse_ip(features_list)
-        init_args['source_port'] = cls._parse_range(features_list)
-        init_args['destination_ip'] = cls._parse_ip(features_list)
-        init_args['destination_port'] = cls._parse_range(features_list)
-
-        if init_args['protocol'] == 'icmp':
-            if features_list[0].isdigit() or features_list[0] in ICMP_TYPE_CODENAMES:
-                init_args['icmp_type'] = features_list.pop(0)
-                if features_list[0].isdigit():
-                    init_args['icmp_code'] = features_list.pop(0)
-
-        if features_list[0] == 'packet-length':
-            init_args['packet_length'] = ' '.join([features_list.pop(0), cls._parse_range(features_list)])
-
-        return cls(**init_args)
 
     @property
     def rule(self):
@@ -580,7 +548,7 @@ class BgpFs2AclTool:
     def __init__(self, xr_client, default_acl_name, fs_start_seq):
         self.xr_client = xr_client
 
-        if not (0 < default_acl_name <= 65):
+        if not (0 < len(default_acl_name) <= 65):
             raise ValueError('ACL name {} is out length range'.format(default_acl_name))
         self.default_acl_name = default_acl_name
 
@@ -770,16 +738,16 @@ if __name__ == "__main__":
     # Todo add fix line numbers;
     # Todo add verbose story;
 
-    args = parser.parse_args()
+    shell_args = parser.parse_args()
 
-    xr_cmd_client = XRCmdClient(user=args.user, password=args.password, host=args.host, port=args.port)
+    xr_cmd_client = XRCmdClient(user=shell_args.user, password=shell_args.password, host=shell_args.host,
+                                port=shell_args.port)
 
-    bgpfs2acltool = BgpFs2AclTool(xr_client=xr_cmd_client, default_acl_name=args.default_acl_name,
-                                  fs_start_seq=args.ace_start_seq)
+    conv_tool = BgpFs2AclTool(xr_client=xr_cmd_client, default_acl_name=shell_args.default_acl_name,
+                              fs_start_seq=shell_args.fs_start_seq)
 
-    if args.revert:
+    if shell_args.revert:
         clean_script_actions(xr_cmd_client)
         sys.exit()
 
-    frequency = int(args.frequency)
-    default_acl_name = str(args.default_acl_name)
+    run(conv_tool)
