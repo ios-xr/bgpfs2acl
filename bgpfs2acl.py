@@ -76,6 +76,9 @@ ICMP_TYPE_CODENAMES = (
     'unreachable',
 )
 
+FLOWSPEC_START_REMARK = "FLOWSPEC RULES BEGIN. Do not add statements below this. Added automatically."
+FLOWSPEC_END_REMARK = "FLOWSPEC RULES END"
+
 
 class AccessListEntry:
     class Command(Enum):
@@ -351,6 +354,13 @@ class AccessList:
         self._fs_start = None
         self._fs_end = None
 
+        self._changes = []
+
+    def _remove_statement(self, seq):
+        statement = self._statements.pop(seq, None)
+        if statement:
+            self._changes.append('no {}'.seq)
+
     def apply_flowspec(self, flowspec, fs_start_seq=None):
         if flowspec.is_empty():
             return
@@ -358,8 +368,7 @@ class AccessList:
         if self._fs_start:
             self.remove_flowspec()
 
-        to_apply = [AccessListEntry.create_remark(
-            "FLOWSPEC RULES BEGIN. Do not add statements below this. Added automatically.").rule]
+        to_apply = [AccessListEntry.create_remark(FLOWSPEC_START_REMARK).rule]
         for fs_rule in flowspec:
             access_list_entries = [ace.rule for ace in AccessListEntry.from_flowspec_rule(fs_rule)]
             entries_length = len(access_list_entries)
@@ -370,31 +379,37 @@ class AccessList:
                     ).rule
                 )
             to_apply.extend(access_list_entries)
-        to_apply.append(AccessListEntry.create_remark("FLOWSPEC RULES END").rule)
+        to_apply.append(AccessListEntry.create_remark(FLOWSPEC_END_REMARK).rule)
 
         last_seq, last_statement = self._statements.peekitem()
+        next_free_seq = last_seq + self._seq_step
 
-        last_permit_ace = 'permit ipv4 any any'
-        if last_statement == last_permit_ace:
-            self._statements.popitem()
-            last_seq -= 1
+        permit_all_statement = 'permit ipv4 any any'
+        if last_statement == permit_all_statement:
+            self._remove_statement(last_seq)
+            next_free_seq = last_seq
 
-        to_apply.append(last_permit_ace)
+        to_apply.append(permit_all_statement)
 
-        if fs_start_seq is None or fs_start_seq < last_seq:
-            fs_start_seq = last_seq + self._seq_step
+        if fs_start_seq is None or fs_start_seq < next_free_seq:
+            fs_start_seq = next_free_seq
 
         after_apply_last_seq = fs_start_seq + len(to_apply)
         if after_apply_last_seq > self.MAX_SEQUENCE_NUM:
             raise IndexError(
-                "Add sequence {} exceed maximum allowed {}".format(after_apply_last_seq,
-                                                                   self.MAX_SEQUENCE_NUM)
+                "Added sequence {} exceed maximum allowed {}".format(after_apply_last_seq,
+                                                                     self.MAX_SEQUENCE_NUM)
             )
 
         cur_seq = fs_start_seq
-        for entry in to_apply:
-            self._statements.update({cur_seq: entry})
+        for statement in to_apply:
+            self._add_statement(statement, cur_seq)
             cur_seq += 1
+
+    def _add_statement(self, statement, seq=None, save_change=True):
+        self._statements.update({seq: statement})
+        if save_change:
+            self._changes.append('{} {}'.format(seq, statement))
 
     def add_statement(self, statement, seq=None):
         statement_pat = re.compile(r'(deny|remark|permit) .+')
@@ -412,30 +427,65 @@ class AccessList:
         if seq > self.MAX_SEQUENCE_NUM:
             raise IndexError('Sequence index is out of range: {}. Max: {}'.format(seq, self.MAX_SEQUENCE_NUM))
 
-        self._statements.update({seq: statement})
+        self._add_statement(statement, seq)
 
     def is_empty(self):
         return len(self._statements) == 0
-    
+
+    def is_flowspec_applied(self):
+        return bool(self._fs_start)
+
     @classmethod
     def from_raw_config(cls, raw_config_list):
         if len(raw_config_list) <= 1:
             raise ValueError('Passed empty config list.')
 
-        acl_name_pat = re.compile(r'ipv[4,6] access-list ([^\s]{1,64})')
+        acl_name_pat = re.compile(r'ipv4 access-list ([^\s]{1,64})')
         acls = []
-        next_acl = None
+        cur_acl = None
         for line in raw_config_list:
             acl_title = acl_name_pat.match(line)
             if acl_title:
-                next_acl = cls(acl_title.group(1))
-            elif line == '!' and next_acl is not None:
-                acls.append(next_acl)
-                next_acl = None
-            elif next_acl is not None:
+                cur_acl = cls(acl_title.group(1))
+            elif line == '!' and cur_acl is not None:
+                acls.append(cur_acl)
+                cur_acl = None
+            elif cur_acl is not None:
                 seq, statement = line.split(' ', 1)
-                next_acl.add_statement(line, seq)
+                if statement.startswith(FLOWSPEC_START_REMARK):
+                    cur_acl._fs_start = seq
+                elif statement.startswith(FLOWSPEC_END_REMARK):
+                    cur_acl._fs_end = seq
+                cur_acl._add_statement(line, seq, save_change=False)
         return acls
+
+    def remove_flowspec(self):
+        if self._fs_start is None:
+            return None
+
+        fs_iter = self._statements.irange(minimum=self._statements.index(self._fs_start),
+                                          maximum=self._statements.index(self._fs_end))
+        for seq in fs_iter:
+            self._remove_statement(seq)
+
+        last_seq, last_statement = self._statements.peekitem()
+        if last_seq > self._fs_start:
+            self._remove_statement(last_seq)
+            self._add_statement(last_statement, self._fs_start)
+
+        self._fs_start = None
+        self._fs_end = None
+
+    def reset_changes(self):
+        self._changes = []
+
+    def get_changes_config(self):
+        if not self._changes:
+            return None
+        access_list_title = 'ipv4 access-list {}'.format(self.name)
+        changes_config = '\n'.join(self._changes)
+        changes_config = '\n'.join([access_list_title, changes_config])
+        return changes_config
 
 
 class FlowSpecRule:
