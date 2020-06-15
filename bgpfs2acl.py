@@ -348,7 +348,7 @@ class AccessList:
         if len(name) > 64:
             raise ValueError("Name {} is too long.".format(name))
 
-        self.name = name
+        self._name = name
         self._seq_step = seq_step
         self._statements = SortedDict()
         self._fs_start = None
@@ -356,10 +356,18 @@ class AccessList:
 
         self._changes = []
 
+    @property
+    def title(self):
+        return 'ipv4 access-list {}'.format(self._name)
+
+    @property
+    def name(self):
+        return self._name
+
     def _remove_statement(self, seq):
         statement = self._statements.pop(seq, None)
         if statement:
-            self._changes.append('no {}'.seq)
+            self._changes.append('no {}'.format(seq))
 
     def apply_flowspec(self, flowspec, fs_start_seq=None):
         if flowspec.is_empty():
@@ -436,7 +444,7 @@ class AccessList:
         return bool(self._fs_start)
 
     @classmethod
-    def from_raw_config(cls, raw_config_list):
+    def from_config(cls, raw_config_list):
         if len(raw_config_list) <= 1:
             raise ValueError('Passed empty config list.')
 
@@ -482,10 +490,16 @@ class AccessList:
     def get_changes_config(self):
         if not self._changes:
             return None
-        access_list_title = 'ipv4 access-list {}'.format(self.name)
         changes_config = '\n'.join(self._changes)
-        changes_config = '\n'.join([access_list_title, changes_config])
+        changes_config = '\n'.join([self.title, changes_config])
         return changes_config
+
+    def get_config(self):
+        if self.is_empty():
+            return None
+        config = '\n'.join(['{} {}'.format(seq, statement) for seq, statement in self._statements.iteritems()])
+        config = '\n'.join([self.title, config])
+        return config
 
 
 class FlowSpecRule:
@@ -576,11 +590,12 @@ class BgpFs2AclTool:
         self.cached_acl_md5 = None
         self.cached_interfaces_md5 = None
 
-    def get_interfaces(self, include_shutdown=True):
+    def get_interfaces(self, include_shutdown=True, filter_regx=None):
         """
         Returns XR interfaces dict, where a key is an 'interface ...' line, and a value is a list of applied
         features
         :param include_shutdown:
+        :param filter_regx:
         :return:
         """
         logger.info("Getting Interfaces")
@@ -600,13 +615,15 @@ class BgpFs2AclTool:
                     j += 1
                 if not exclude:
                     interfaces_dict.update({line: features_list})
+        if filter_regx:
+            interfaces_dict = self._filter_interfaces(interfaces_dict, filter_regx)
 
         return interfaces_dict
 
-    def filter_interfaces(self, interfaces, regexp):
+    def _filter_interfaces(self, interfaces, regx):
         """Filter the list of interfaces by matching the regular expression."""
         filtered_interfaces = {}
-        pat = re.compile(r'{}'.format(regexp))
+        pat = re.compile(r'{}'.format(regx))
 
         for interface_name, feature_list in interfaces.iteritems():
             if pat.match(interface_name):
@@ -618,7 +635,7 @@ class BgpFs2AclTool:
         interfaces_dict = self.get_interfaces()
         for interface_name, feature_list in interfaces_dict.iteritems():
             for setting in feature_list:
-                if ('access-group ' + acl_name + ' ingress') in setting:
+                if setting.startswith('ipv4 access-group ' + acl_name + ' ingress'):
                     result_dict.update({interface_name: feature_list})
                     break
         return result_dict
@@ -636,11 +653,12 @@ class BgpFs2AclTool:
         if len(acls_raw) <= 1:
             return None
 
-        acls = AccessList.from_raw_config(acls_raw)
+        acls = AccessList.from_config(acls_raw)
         return acls
 
     def apply_conf(self, conf):
-        return self.xr_client.xrapply_string(conf)
+        if conf:
+            return self.xr_client.xrapply_string(conf)
 
 
 def get_acl_md5(access_lists):
@@ -664,50 +682,60 @@ def get_interfaces_md5(interfaces):
     return hashlib.md5(interfaces_conf).hexdigest()
 
 
-def run(bgpfs2acltool):
+def run(bgpfs2acl_tool):
     to_apply = ''
-    flowspec = bgpfs2acltool.get_flowspec()
-    access_lists = bgpfs2acltool.get_access_lists()
-    interfaces = bgpfs2acltool.get_interfaces()
-    filtered_interfaces = bgpfs2acltool.filter_interfaces(interfaces, '^interface (Gig|Ten|Twe|Fo|Hu).*')
+    flowspec = bgpfs2acl_tool.get_flowspec()
+    access_lists = bgpfs2acl_tool.get_access_lists()
+    filtered_interfaces = bgpfs2acl_tool.get_interfaces(filter_regx='^interface (Gig|Ten|Twe|Fo|Hu).*')
 
     if flowspec is None:
-        if bgpfs2acltool.cached_fs_md5:
+        if bgpfs2acl_tool.cached_fs_md5:
             for acl in access_lists:
-                remove_fs_conf = acl.remove_flowspec()
+                acl.remove_flowspec()
+                remove_fs_conf = acl.get_changes_config()
                 to_apply = ''.join([to_apply, remove_fs_conf])
 
-            bgpfs2acltool.cached_fs_md5 = None
+            bgpfs2acl_tool.cached_fs_md5 = None
 
     else:
         filtered_interfaces_md5 = get_interfaces_md5(filtered_interfaces)
-        if flowspec.hash != bgpfs2acltool.cached_fs_md5 \
-                or filtered_interfaces_md5 != bgpfs2acltool.cached_interfaces_md5:
-            applied_acls = set()
+        if flowspec.md5 != bgpfs2acl_tool.cached_fs_md5 \
+                or filtered_interfaces_md5 != bgpfs2acl_tool.cached_filtered_interfaces_md5:
+            bound_acls = set()
             pat = re.compile(r'ipv4 access-group (.*) ingress')
             to_apply_default_acl = []
             for interface, feature_list in filtered_interfaces.iteritems():
                 for feature in feature_list:
                     f_match = pat.match(feature)
                     if f_match:
-                        applied_acls.add(f_match.group(1))
+                        bound_acls.add(f_match.group(1))
                     else:
-                        applied_acls.add(bgpfs2acltool.default_acl_name)
                         to_apply_default_acl.append(interface)
+
+            if to_apply_default_acl:
+                default_acl = [acl for acl in access_lists if acl.name == bgpfs2acl_tool.default_acl_name]
+                if not default_acl:
+                    access_lists.append(AccessList(bgpfs2acl_tool.default_acl_name))
+                bound_acls.add(bgpfs2acl_tool.default_acl_name)
+
             for acl in access_lists():
-                if acl.name in applied_acls:
-                    appliy_config = acl.apply_flowspec()
-                    to_apply = '\n'.join([to_apply, appliy_config])
+                if acl.name in bound_acls:
+                    acl.apply_flowspec()
+                    apply_config = acl.get_changes_config()
+                    to_apply = '\n'.join([to_apply, apply_config])
 
             for interface in to_apply_default_acl:
-                ingress_acl_feature = 'ipv4 access-group {} ingress'.format(bgpfs2acltool.default_acl_name)
+                ingress_acl_feature = 'ipv4 access-group {} ingress'.format(bgpfs2acl_tool.default_acl_name)
                 to_apply = '\n'.join([to_apply, interface, ingress_acl_feature])
 
-            bgpfs2acltool.cached_fs_md5 = flowspec.hash
-            bgpfs2acltool.cached_interfaces_md5 = filtered_interfaces_md5
+            bgpfs2acl_tool.cached_fs_md5 = flowspec.md5
+
+            updated_interfaces = bgpfs2acl_tool.get_interfaces(filter_regx='^interface (Gig|Ten|Twe|Fo|Hu).*')
+            updated_interfaces_md5 = get_interfaces_md5(updated_interfaces)
+            bgpfs2acl_tool.cached_filtered_interfaces_md5 = updated_interfaces_md5
 
     if to_apply:
-        bgpfs2acltool.apply_conf(to_apply)
+        bgpfs2acl_tool.apply_conf(to_apply)
 
 
 def parse_flowspec_rules_ipv4(rules):
