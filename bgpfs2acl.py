@@ -395,12 +395,6 @@ class AccessList:
         for fs_rule in flowspec.rules:
             access_list_entries = [ace.rule for ace in AccessListEntry.from_flowspec_rule(fs_rule)]
             entries_length = len(access_list_entries)
-            if entries_length > 1:
-                to_apply.append(
-                    AccessListEntry.create_remark(
-                        "Next {} rules are equal to FS rule \"{}\"".format(entries_length, fs_rule.raw_flow)
-                    ).rule
-                )
             to_apply.extend(access_list_entries)
         to_apply.append(AccessListEntry.create_remark(FLOWSPEC_END_REMARK).rule)
 
@@ -480,7 +474,7 @@ class AccessList:
                     cur_acl._fs_start = seq
                 elif statement.startswith(FLOWSPEC_END_REMARK):
                     cur_acl._fs_end = seq
-                cur_acl._add_statement(line, seq, save_change=False)
+                cur_acl._add_statement(statement, seq, save_change=False)
         return acls
 
     def remove_flowspec(self):
