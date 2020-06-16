@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from __future__ import print_function
+from __future__ import unicode_literals, print_function
 
 import argparse
 import hashlib
@@ -8,6 +8,8 @@ import socket
 
 import sys
 import threading
+from itertools import product
+
 from sortedcontainers import SortedDict
 from pprint import pprint
 
@@ -83,24 +85,19 @@ class AccessListEntry:
         permit = 'permit'
         remark = 'remark'
 
-    def __init__(self, command, protocol, source_ip=None, source_port=None, destination_ip=None,
+    def __init__(self, command, protocol=None, source_ip=None, source_port=None, destination_ip=None,
                  destination_port=None, icmp_type=None, icmp_code=None, packet_length=None, commentary=None):
-        if command not in [c.value for c in AccessListEntry.Command.__members__.values]:
+        if command not in [c.value for c in AccessListEntry.Command.__members__.values()]:
             raise ValueError('Passed wrong ACL command: {}'.format(command))
         self._command = command
 
-        if command == AccessListEntry.Command.remark and commentary is None:
-            raise ValueError("remark: no commentary provided.")
+        if command == AccessListEntry.Command.remark.value:
+            if commentary is None:
+                raise ValueError("remark: no commentary provided.")
+            self._commentary = commentary
+            return
 
-        self._commentary = commentary
-
-        if protocol is None:
-            raise ValueError('Protocol is required. Allowed protocols: UDP, TCP, ICMP')
-
-        protocol = str(protocol)
-        if (protocol not in ALLOWED_PROTOCOLS.values()) or (protocol not in ALLOWED_PROTOCOLS.keys()):
-            raise ValueError('Passed wrong protocol value: {}'.format(protocol))
-        self._protocol = protocol
+        self._protocol = self._validate_protocol(protocol, raise_exception=True)
 
         self._source_ip = self.validate_ip(source_ip)
         self._source_port = self.validate_rangeable_features(source_port)
@@ -123,20 +120,29 @@ class AccessListEntry:
         self._packet_length = self.validate_rangeable_features(packet_length)
 
     def _generate_rule(self):
-        if self._command == AccessListEntry.Command.remark:
+        if self._command == AccessListEntry.Command.remark.value:
             return ' '.join([self._command, self._commentary])
 
-        result_rule = [self._command, self._protocol, self._source_ip, self._source_port,
-                       self._destination_ip, self._destination_port, self._icmp_type, self._icmp_code,
-                       self._packet_length]  # order is important
+        features = [self._command, self._protocol, self._source_ip, self._source_port,
+                       self._destination_ip, self._destination_port]  # order is important
 
-        result_rule = [str(i) for i in result_rule if i is not None]  # removed all empty fields
+        features = [str(i) for i in features if i is not None] # removed all empty fields
 
-        return ' '.join(result_rule)
+        keyword_features = []
+        if self._icmp_type:
+            keyword_features.append(' '.join(['icmp_type', self._icmp_type]))
+        if self._icmp_code:
+            keyword_features.append(' '.join(['icmp_code', self._icmp_code]))
+        if self._packet_length:
+            keyword_features.append(' '.join(['packet-length', self._packet_length]))
+
+        features.extend(keyword_features)
+
+        return ' '.join(features)
 
     @classmethod
     def create_remark(cls, commentary):
-        return cls(AccessListEntry.Command.remark, commentary=commentary)
+        return cls(AccessListEntry.Command.remark.value, commentary=commentary)
 
     @staticmethod
     def _parse_ip(features_list):
@@ -202,59 +208,82 @@ class AccessListEntry:
 
         raise ValueError('Wrong ip parameter: {}'.format(ip))
 
+    @staticmethod
+    def _validate_protocol_list(protocols):
+        if not protocols:
+            return []
+
+        validated = []
+        for proto in protocols:
+            proto = AccessListEntry._validate_protocol(proto, raise_exception=False)
+            if proto:
+                validated.append(proto)
+        return validated
+
     @classmethod
-    def from_flowspec_rule(cls, flowspec_rule, many=True):
+    def from_flowspec_rule(cls, flowspec_rule):
         result_acl_rules = []
 
         init_args = {}
 
-        init_args['command'] = AccessListEntry._parse_flowspec_action(flowspec_rule.raw_actions)
-        init_args['source_ip'] = flowspec_rule.get_feature(FlowSpecRule.FeatureNames.source_ip)
-        init_args['destination_ip'] = flowspec_rule.get_feature(FlowSpecRule.FeatureNames.destination_ip)
+        action = AccessListEntry._parse_flowspec_action(flowspec_rule.raw_actions)
+        if not action:
+            return []
+        init_args['command'] = action
+
+        init_args['source_ip'] = flowspec_rule.get_feature(FlowSpecRule.FeatureNames.source_ip.value)
+        init_args['destination_ip'] = flowspec_rule.get_feature(FlowSpecRule.FeatureNames.destination_ip.value)
 
         protocol_list = AccessListEntry._parse_flowspec_protocol(
-            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.protocol)
+            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.protocol.value)
         )
+        protocol_list = cls._validate_protocol_list(protocol_list)
+
         source_port_list = AccessListEntry._parse_conditional_fs_type(
-            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.source_port)
+            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.source_port.value),
+            default=[None]
         )
 
         destination_port_list = AccessListEntry._parse_conditional_fs_type(
-            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.destination_port)
+            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.destination_port.value),
+            default=[None]
         )
 
         packet_length_list = AccessListEntry._parse_conditional_fs_type(
-            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.length)
+            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.length.value),
+            default=[None]
         )
 
-        init_args['icmp_type'] = AccessListEntry._parse_conditional_fs_type(
-            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.icmp_type)
+        icmp_type = AccessListEntry._parse_conditional_fs_type(
+            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.icmp_type.value),
+            default=[None]
         )
 
-        init_args['icmp_code'] = AccessListEntry._parse_conditional_fs_type(
-            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.icmp_type)
+        icmp_code = AccessListEntry._parse_conditional_fs_type(
+            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.icmp_type.value),
+            default=[None]
         )
 
         #  ACL doesn't support ranges of icmp types/codes, therefore skipping
-        if (init_args['icmp_type'] and len(init_args['icmp_type']) > 1) \
-                or (init_args['icmp_code'] and len(init_args['icmp_code']) > 1):
+        if len(icmp_type) > 1 or len(icmp_code) > 1:
             return []
+        else:
+            init_args['icmp_type'] = icmp_type[0]
+            init_args['icmp_code'] = icmp_code[0]
 
-        for protocol in protocol_list:
-            for source_port in source_port_list:
-                for destination_port in destination_port_list:
-                    for packet_length in packet_length_list:
-                        init_args['protocol'] = protocol
-                        init_args['source_port'] = source_port
-                        init_args['destination_port'] = destination_port
-                        init_args['packet_length'] = packet_length
-                    result_acl_rules.append(cls(**init_args))
+        features_iter = product(protocol_list, source_port_list, destination_port_list, packet_length_list)
+        for proto, s_port, d_port, pack_len in features_iter:
+            init_args['protocol'] = proto
+            init_args['source_port'] = s_port
+            init_args['destination_port'] = d_port
+            init_args['packet_length'] = pack_len
+            result_acl_rules.append(cls(**init_args))
         return result_acl_rules
 
     @staticmethod
     def _parse_flowspec_action(action):
         if FlowSpecRule.DENY_ACTION in action:
-            return AccessListEntry.Command.deny
+            return AccessListEntry.Command.deny.value
 
     @staticmethod
     def _parse_flowspec_address(fs_address):
@@ -288,9 +317,9 @@ class AccessListEntry:
         return acl_protocol_list
 
     @staticmethod
-    def _parse_conditional_fs_type(fs_type_conditions):
+    def _parse_conditional_fs_type(fs_type_conditions, default=None):
         if not fs_type_conditions:
-            return None
+            return default
 
         conditions_list = fs_type_conditions.split('|')
 
@@ -305,7 +334,25 @@ class AccessListEntry:
                 cond = cond[1:]  # skipping '='
                 transformed_cond_list.append('eq {}'.format(cond))
 
+        if not transformed_cond_list:
+            return default
+
         return transformed_cond_list
+
+    @staticmethod
+    def _validate_protocol(proto, raise_exception=True):
+        if proto is None:
+            if raise_exception:
+                raise ValueError('Protocol is required. Allowed protocols: UDP, TCP, ICMP')
+            return None
+
+        proto = str(proto)
+        if (proto not in ALLOWED_PROTOCOLS.values()) and (proto not in ALLOWED_PROTOCOLS.keys()):
+            if raise_exception:
+                raise ValueError('Passed wrong protocol value: {}'.format(proto))
+            return None
+
+        return proto
 
 
 class AccessList:
@@ -345,7 +392,7 @@ class AccessList:
             self.remove_flowspec()
 
         to_apply = [AccessListEntry.create_remark(FLOWSPEC_START_REMARK).rule]
-        for fs_rule in flowspec:
+        for fs_rule in flowspec.rules:
             access_list_entries = [ace.rule for ace in AccessListEntry.from_flowspec_rule(fs_rule)]
             entries_length = len(access_list_entries)
             if entries_length > 1:
@@ -428,6 +475,7 @@ class AccessList:
                 cur_acl = None
             elif cur_acl is not None:
                 seq, statement = line.split(' ', 1)
+                seq = int(seq)
                 if statement.startswith(FLOWSPEC_START_REMARK):
                     cur_acl._fs_start = seq
                 elif statement.startswith(FLOWSPEC_END_REMARK):
@@ -503,7 +551,7 @@ class FlowSpecRule:
         return raw_flow, raw_actions
 
     def get_feature(self, feature_name):
-        if feature_name not in [f.value for f in FlowSpecRule.FeatureNames.__members__.values]:
+        if feature_name not in [f.value for f in FlowSpecRule.FeatureNames.__members__.values()]:
             raise ValueError("Wrong feature name: {}".format(feature_name))
 
         return self.flow_features.get(feature_name, None)
@@ -511,7 +559,8 @@ class FlowSpecRule:
 
 class FlowSpec:
     def __init__(self, raw_config):
-        self.raw_config = self._validate_config(raw_config)
+        self._validate_config(raw_config)
+        self.raw_config = raw_config
         self.rules = self._parse_config()
 
     def _parse_config(self):
@@ -526,14 +575,14 @@ class FlowSpec:
             raise ValueError("Empty flowspec: {}".format(raw_config))
 
         if raw_config[0].startswith("AFI:"):
-            raw_config = raw_config[1:]
+            del raw_config[0]
 
         for i in range(0, len(raw_config), 2):
-            if not (raw_config[i].strip().startswith("Flow") and raw_config[i + 1].strip().startwith("Actions")):
+            if not (raw_config[i].strip().startswith("Flow") and raw_config[i + 1].strip().startswith("Actions")):
                 raise ValueError("Bad flowspec format: {}".format(raw_config))
 
     def is_empty(self):
-        return bool(len(self.rules))
+        return not bool(len(self.rules))
 
     @property
     def config(self):
@@ -541,7 +590,7 @@ class FlowSpec:
 
     @property
     def md5(self):
-        return hashlib.md5(self.config()).hexdigest()
+        return hashlib.md5(self.config).hexdigest()
 
 
 class BgpFs2AclTool:
@@ -654,6 +703,7 @@ def run(bgpfs2acl_tool):
     to_apply = ''
     flowspec = bgpfs2acl_tool.get_flowspec()
     access_lists = bgpfs2acl_tool.get_access_lists()
+    #  TODO: do not forget to exclude shutdown interfaces
     filtered_interfaces = bgpfs2acl_tool.get_interfaces(filter_regx='^interface (Gig|Ten|Twe|Fo|Hu).*')
 
     if flowspec is None:
@@ -686,9 +736,9 @@ def run(bgpfs2acl_tool):
                     access_lists.append(AccessList(bgpfs2acl_tool.default_acl_name))
                 bound_acls.add(bgpfs2acl_tool.default_acl_name)
 
-            for acl in access_lists():
+            for acl in access_lists:
                 if acl.name in bound_acls:
-                    acl.apply_flowspec()
+                    acl.apply_flowspec(flowspec)
                     apply_config = acl.get_changes_config()
                     to_apply = '\n'.join([to_apply, apply_config])
 
