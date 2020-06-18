@@ -28,7 +28,7 @@ ALLOWED_PROTOCOLS = {
     'udp': '17',
 }
 
-ICMP_TYPE_CODENAMES = (
+ICMP_TYPE_CODENAMES = {
     'administratively-prohibited',
     'alternate-address',
     'conversion-error',
@@ -73,7 +73,7 @@ ICMP_TYPE_CODENAMES = (
     'traceroute',
     'ttl-exceeded',
     'unreachable',
-)
+}
 
 FLOWSPEC_START_REMARK = "FLOWSPEC RULES BEGIN. Do not add statements below this. Added automatically."
 FLOWSPEC_END_REMARK = "FLOWSPEC RULES END"
@@ -86,7 +86,8 @@ class AccessListEntry:
         remark = 'remark'
 
     def __init__(self, command, protocol=None, source_ip=None, source_port=None, destination_ip=None,
-                 destination_port=None, icmp_type=None, icmp_code=None, packet_length=None, commentary=None):
+                 destination_port=None, icmp_type=None, icmp_code=None, packet_length=None, fragment_type=None,
+                 commentary=None):
         if command not in [c.value for c in AccessListEntry.Command.__members__.values()]:
             raise ValueError('Passed wrong ACL command: {}'.format(command))
         self._command = command
@@ -119,6 +120,8 @@ class AccessListEntry:
 
         self._packet_length = self.validate_rangeable_features(packet_length)
 
+        self._fragment_type = self._validate_fragment_type(fragment_type)
+
     def _generate_rule(self):
         if self._command == AccessListEntry.Command.remark.value:
             return ' '.join([self._command, self._commentary])
@@ -130,11 +133,13 @@ class AccessListEntry:
 
         keyword_features = []
         if self._icmp_type:
-            keyword_features.append(' '.join(['icmp_type', self._icmp_type]))
+            keyword_features.extend(['icmp_type', self._icmp_type])
         if self._icmp_code:
-            keyword_features.append(' '.join(['icmp_code', self._icmp_code]))
+            keyword_features.extend(['icmp_code', self._icmp_code])
+        if self._fragment_type:
+            keyword_features.extend(['fragment-type', self._fragment_type])
         if self._packet_length:
-            keyword_features.append(' '.join(['packet-length', self._packet_length]))
+            keyword_features.extend(['packet-length', self._packet_length])
 
         features.extend(keyword_features)
 
@@ -254,6 +259,11 @@ class AccessListEntry:
             default=[None]
         )
 
+        init_args['fragment_type'] = AccessListEntry._parse_fs_fragment_type(
+            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.fragment_type.value),
+            default=None
+        )
+
         icmp_type = AccessListEntry._parse_conditional_fs_type(
             flowspec_rule.get_feature(FlowSpecRule.FeatureNames.icmp_type.value),
             default=[None]
@@ -354,6 +364,32 @@ class AccessListEntry:
 
         return proto
 
+    @staticmethod
+    def _validate_fragment_type(fragment_type, raise_exception=True):
+        if not fragment_type:
+            return None
+
+        if fragment_type != 'is-fragment':
+            if raise_exception:
+                raise ValueError('Passed wrong fragment_type value: {}'.format(fragment_type))
+            else:
+                return None
+
+        return fragment_type
+
+    @classmethod
+    def _parse_fs_fragment_type(cls, frag, default=None):
+        if not frag:
+            return default
+
+        fragment_type_list = frag.split(':')
+
+        for fragment_type in fragment_type_list:
+            if 'IsF' in fragment_type:
+                return 'is-fragment'
+
+        return default
+
 
 class AccessList:
     MIN_SEQUENCE_NUM = 1
@@ -394,7 +430,6 @@ class AccessList:
         to_apply = [AccessListEntry.create_remark(FLOWSPEC_START_REMARK).rule]
         for fs_rule in flowspec.rules:
             access_list_entries = [ace.rule for ace in AccessListEntry.from_flowspec_rule(fs_rule)]
-            entries_length = len(access_list_entries)
             to_apply.extend(access_list_entries)
         to_apply.append(AccessListEntry.create_remark(FLOWSPEC_END_REMARK).rule)
 
@@ -522,6 +557,7 @@ class FlowSpecRule:
         length = 'Length'
         icmp_type = 'ICMPType'
         icmp_code = 'ICMPCode'
+        fragment_type = 'Frag'
 
     DENY_ACTION = 'Traffic-rate: 0 bps'
 
@@ -529,9 +565,9 @@ class FlowSpecRule:
         self.raw_flow, self.raw_actions = self._validate(raw_flow, raw_actions)
         self.flow_features = {}
         for feature in self.raw_flow.split(','):
-            split_feature = feature.split(':')
-            feature_name = split_feature[-2]
-            feature_value = split_feature[-1]
+            split_feature = feature.split(':', 1)
+            feature_name = split_feature[0]
+            feature_value = split_feature[1]
             self.flow_features.update({feature_name: feature_value})
 
     @staticmethod
@@ -541,6 +577,8 @@ class FlowSpecRule:
 
         if not raw_actions.strip().startswith("Actions"):
             raise ValueError("Bad actions format: {}".format(raw_actions))
+
+        raw_flow = raw_flow.split(':', 1)[1]
 
         return raw_flow, raw_actions
 
