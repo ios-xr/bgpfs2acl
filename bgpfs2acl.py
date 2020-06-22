@@ -86,8 +86,7 @@ class AccessListEntry:
         remark = 'remark'
 
     def __init__(self, command, protocol=None, source_ip=None, source_port=None, destination_ip=None,
-                 destination_port=None, icmp_type=None, icmp_code=None, packet_length=None, fragment_type=None,
-                 commentary=None):
+                 destination_port=None, icmp_type=None, icmp_code=None, commentary=None):
         if command not in [c.value for c in AccessListEntry.Command.__members__.values()]:
             raise ValueError('Passed wrong ACL command: {}'.format(command))
         self._command = command
@@ -118,28 +117,20 @@ class AccessListEntry:
                 raise ValueError('Wrong icmp_code value: {}'.format(icmp_code))
         self._icmp_code = icmp_code
 
-        self._packet_length = self.validate_rangeable_features(packet_length)
-
-        self._fragment_type = self._validate_fragment_type(fragment_type)
-
     def _generate_rule(self):
         if self._command == AccessListEntry.Command.remark.value:
             return ' '.join([self._command, self._commentary])
 
         features = [self._command, self._protocol, self._source_ip, self._source_port,
-                       self._destination_ip, self._destination_port]  # order is important
+                    self._destination_ip, self._destination_port]  # order is important
 
-        features = [str(i) for i in features if i is not None] # removed all empty fields
+        features = [str(i) for i in features if i is not None]  # removed all empty fields
 
         keyword_features = []
         if self._icmp_type:
             keyword_features.extend(['icmp_type', self._icmp_type])
         if self._icmp_code:
             keyword_features.extend(['icmp_code', self._icmp_code])
-        if self._fragment_type:
-            keyword_features.extend(['fragment-type', self._fragment_type])
-        if self._packet_length:
-            keyword_features.extend(['packet-length', self._packet_length])
 
         features.extend(keyword_features)
 
@@ -231,7 +222,7 @@ class AccessListEntry:
 
         init_args = {}
 
-        action = AccessListEntry._parse_flowspec_action(flowspec_rule.raw_actions)
+        action = AccessListEntry._parse_flowspec_action(flowspec_rule.actions)
         if not action:
             return []
         init_args['command'] = action
@@ -254,23 +245,13 @@ class AccessListEntry:
             default=[None]
         )
 
-        packet_length_list = AccessListEntry._parse_conditional_fs_type(
-            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.length.value),
-            default=[None]
-        )
-
-        init_args['fragment_type'] = AccessListEntry._parse_fs_fragment_type(
-            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.fragment_type.value),
-            default=None
-        )
-
         icmp_type = AccessListEntry._parse_conditional_fs_type(
             flowspec_rule.get_feature(FlowSpecRule.FeatureNames.icmp_type.value),
             default=[None]
         )
 
         icmp_code = AccessListEntry._parse_conditional_fs_type(
-            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.icmp_type.value),
+            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.icmp_code.value),
             default=[None]
         )
 
@@ -281,12 +262,12 @@ class AccessListEntry:
             init_args['icmp_type'] = icmp_type[0]
             init_args['icmp_code'] = icmp_code[0]
 
-        features_iter = product(protocol_list, source_port_list, destination_port_list, packet_length_list)
-        for proto, s_port, d_port, pack_len in features_iter:
+        features_iter = product(protocol_list, source_port_list, destination_port_list)
+        for proto, s_port, d_port in features_iter:
+            # TODO: fix for ICMP
             init_args['protocol'] = proto
             init_args['source_port'] = s_port
             init_args['destination_port'] = d_port
-            init_args['packet_length'] = pack_len
             result_acl_rules.append(cls(**init_args))
         return result_acl_rules
 
@@ -505,9 +486,9 @@ class AccessList:
             elif cur_acl is not None:
                 seq, statement = line.split(' ', 1)
                 seq = int(seq)
-                if statement.startswith(FLOWSPEC_START_REMARK):
+                if FLOWSPEC_START_REMARK in statement and cur_acl._fs_start is None:
                     cur_acl._fs_start = seq
-                elif statement.startswith(FLOWSPEC_END_REMARK):
+                elif FLOWSPEC_END_REMARK in statement:
                     cur_acl._fs_end = seq
                 cur_acl._add_statement(statement, seq, save_change=False)
         return acls
@@ -516,9 +497,8 @@ class AccessList:
         if self._fs_start is None:
             return None
 
-        fs_iter = self._statements.irange(minimum=self._statements.index(self._fs_start),
-                                          maximum=self._statements.index(self._fs_end))
-        for seq in fs_iter:
+        fs_iter = self._statements.irange(minimum=self._fs_start, maximum=self._fs_end)
+        for seq in list(fs_iter):
             self._remove_statement(seq)
 
         last_seq, last_statement = self._statements.peekitem()
@@ -554,75 +534,122 @@ class FlowSpecRule:
         protocol = 'Proto'
         destination_port = 'DPort'
         source_port = 'SPort'
-        length = 'Length'
         icmp_type = 'ICMPType'
         icmp_code = 'ICMPCode'
-        fragment_type = 'Frag'
 
     DENY_ACTION = 'Traffic-rate: 0 bps'
 
-    def __init__(self, raw_flow, raw_actions):
-        self.raw_flow, self.raw_actions = self._validate(raw_flow, raw_actions)
-        self.flow_features = {}
-        for feature in self.raw_flow.split(','):
-            split_feature = feature.split(':', 1)
-            feature_name = split_feature[0]
-            feature_value = split_feature[1]
-            self.flow_features.update({feature_name: feature_value})
+    def __init__(self):
+        self._raw_flow = None
+        self._raw_actions = None
+        self._flow_features = {}
 
     @staticmethod
-    def _validate(raw_flow, raw_actions):
+    def _validate(raw_flow, raw_actions, raise_exception=True):
         if not raw_flow.strip().startswith("Flow"):
-            raise ValueError("Bad flow format: {}".format(raw_flow))
+            if raise_exception:
+                raise ValueError("Bad flow format: {}".format(raw_flow))
+            return None, None
 
         if not raw_actions.strip().startswith("Actions"):
-            raise ValueError("Bad actions format: {}".format(raw_actions))
+            if raise_exception:
+                raise ValueError("Bad actions format: {}".format(raw_actions))
+            return None, None
 
         raw_flow = raw_flow.split(':', 1)[1]
+        raw_actions = raw_actions.split(':', 1)[1]
+
+        raw_flow = raw_flow.split(',')
+        feature_names = [f.value for f in FlowSpecRule.FeatureNames.__members__.values()]
+        for feature in raw_flow:
+            split_feature = feature.split(':', 1)
+            if split_feature[0] not in feature_names:
+                return None, None
+
+        if not raw_actions.startswith(FlowSpecRule.DENY_ACTION):
+            return None, None
 
         return raw_flow, raw_actions
+
+    @property
+    def actions(self):
+        return self._raw_actions
 
     def get_feature(self, feature_name):
         if feature_name not in [f.value for f in FlowSpecRule.FeatureNames.__members__.values()]:
             raise ValueError("Wrong feature name: {}".format(feature_name))
 
-        return self.flow_features.get(feature_name, None)
+        return self._flow_features.get(feature_name, None)
+
+    @classmethod
+    def from_config(cls, raw_flow, raw_actions):
+        raw_flow, raw_actions = cls._validate(raw_flow, raw_actions)
+
+        if not raw_flow or not raw_actions:
+            return None
+
+        flowspec = cls()
+        flowspec._raw_flow = raw_flow
+        flowspec._raw_actions = raw_actions
+        for feature in raw_flow:
+            split_feature = feature.split(':', 1)
+            feature_name = split_feature[0]
+            feature_value = split_feature[1]
+            flowspec._flow_features.update({feature_name: feature_value})
+        return flowspec
 
 
 class FlowSpec:
-    def __init__(self, raw_config):
-        self._validate_config(raw_config)
-        self.raw_config = raw_config
-        self.rules = self._parse_config()
-
-    def _parse_config(self):
-        rules = []
-        for i in range(0, len(self.raw_config), 2):
-            rules.append(FlowSpecRule(raw_flow=self.raw_config[i], raw_actions=self.raw_config[i + 1]))
-        return rules
+    def __init__(self):
+        self._raw_config = []
+        self._rules = []
 
     @staticmethod
-    def _validate_config(raw_config):
+    def _validate_config(raw_config, raise_exception=True):
         if len(raw_config) <= 1:
-            raise ValueError("Empty flowspec: {}".format(raw_config))
+            if raise_exception:
+                raise ValueError("Empty flowspec: {}".format(raw_config))
+            return None
 
         if raw_config[0].startswith("AFI:"):
             del raw_config[0]
 
         for i in range(0, len(raw_config), 2):
             if not (raw_config[i].strip().startswith("Flow") and raw_config[i + 1].strip().startswith("Actions")):
-                raise ValueError("Bad flowspec format: {}".format(raw_config))
+                if raise_exception:
+                    raise ValueError("Bad flowspec format: {}".format(raw_config))
+                return None
+        return raw_config
 
     def is_empty(self):
-        return not bool(len(self.rules))
+        return not bool(len(self._rules))
 
     @property
     def config(self):
-        return '\n'.join(self.raw_config)
+        return '\n'.join(self._raw_config)
 
     @property
     def md5(self):
         return hashlib.md5(self.config).hexdigest()
+
+    @property
+    def rules(self):
+        return self._rules
+
+    @classmethod
+    def from_config(cls, fs_config):
+        fs_config = cls._validate_config(fs_config, raise_exception=False)
+        if fs_config is None:
+            return None
+        obj = cls()
+
+        for i in range(0, len(fs_config), 2):
+            rule = FlowSpecRule.from_config(raw_flow=fs_config[i], raw_actions=fs_config[i + 1])
+            if rule:
+                obj._rules.append(rule)
+                obj._raw_config.append(fs_config[i])
+                obj._raw_config.append(fs_config[i + 1])
+        return obj
 
 
 class BgpFs2AclTool:
@@ -639,7 +666,7 @@ class BgpFs2AclTool:
         self.cached_acl_md5 = None
         self.cached_interfaces_md5 = None
 
-    def get_interfaces(self, include_shutdown=True, filter_regx=None):
+    def get_interfaces(self, include_shutdown=False, filter_regx=None):
         """
         Returns XR interfaces dict, where a key is an 'interface ...' line, and a value is a list of applied
         features
@@ -695,7 +722,7 @@ class BgpFs2AclTool:
         if len(flowspec_ipv4) <= 1:
             return None
 
-        return FlowSpec(flowspec_ipv4)
+        return FlowSpec.from_config(flowspec_ipv4)
 
     def get_access_lists(self):
         acls_raw = self.xr_client.xrcmd('sh run ipv4 access-list')
@@ -732,6 +759,7 @@ def get_interfaces_md5(interfaces):
 
 
 def run(bgpfs2acl_tool):
+    # threading.Timer(frequency, run, [bgpfs2acl_tool]).start()
     to_apply = ''
     flowspec = bgpfs2acl_tool.get_flowspec()
     access_lists = bgpfs2acl_tool.get_access_lists()
@@ -788,10 +816,15 @@ def run(bgpfs2acl_tool):
         bgpfs2acl_tool.apply_conf(to_apply)
 
 
-def clean_script_actions(ssh_client):
+def clean_script_actions(bgpfs2acl_tool):
     logger.info('###### Reverting applied acl rules... ######')
-    applied_config = "no ipv4 access-list bgpfs2acl-ipv4"
-    ssh_client.xrapply_string(applied_config)
+    access_lists = bgpfs2acl_tool.get_access_lists()
+    to_apply = []
+    for acl in access_lists:
+        acl.remove_flowspec()
+        apply_config = acl.get_changes_config()
+        to_apply = '\n'.join([to_apply, apply_config])
+    bgpfs2acl_tool.xrapply_string(to_apply)
     logger.info("###### Script execution was complete ######")
 
 
@@ -829,7 +862,8 @@ if __name__ == "__main__":
                               fs_start_seq=shell_args.fs_start_seq)
 
     if shell_args.revert:
-        clean_script_actions(xr_cmd_client)
+        clean_script_actions(conv_tool)
         sys.exit()
+    frequency = shell_args.frequency
 
     run(conv_tool)
