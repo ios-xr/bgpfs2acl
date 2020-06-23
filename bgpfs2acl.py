@@ -107,7 +107,7 @@ class AccessListEntry:
 
         if self._protocol in ('icmp', '1') and icmp_type is not None:
             if ((isinstance(icmp_type, int) or icmp_type.isdigit()) and not 0 < int(icmp_type) < 256) \
-                    or icmp_type not in ICMP_TYPE_CODENAMES:
+                    and icmp_type not in ICMP_TYPE_CODENAMES:
                 raise ValueError('Wrong icmp_type value: {}'.format(icmp_type))
 
         self._icmp_type = icmp_type
@@ -128,9 +128,9 @@ class AccessListEntry:
 
         keyword_features = []
         if self._icmp_type:
-            keyword_features.extend(['icmp_type', self._icmp_type])
+            keyword_features.append(self._icmp_type)
         if self._icmp_code:
-            keyword_features.extend(['icmp_code', self._icmp_code])
+            keyword_features.append(self._icmp_code)
 
         features.extend(keyword_features)
 
@@ -245,12 +245,12 @@ class AccessListEntry:
             default=[None]
         )
 
-        icmp_type = AccessListEntry._parse_conditional_fs_type(
+        icmp_type = AccessListEntry._parse_icmp_value(
             flowspec_rule.get_feature(FlowSpecRule.FeatureNames.icmp_type.value),
             default=[None]
         )
 
-        icmp_code = AccessListEntry._parse_conditional_fs_type(
+        icmp_code = AccessListEntry._parse_icmp_value(
             flowspec_rule.get_feature(FlowSpecRule.FeatureNames.icmp_code.value),
             default=[None]
         )
@@ -264,7 +264,7 @@ class AccessListEntry:
 
         features_iter = product(protocol_list, source_port_list, destination_port_list)
         for proto, s_port, d_port in features_iter:
-            # TODO: fix for ICMP
+            # TODO: fix for ICMP (icmp codes incompatible with ports)
             init_args['protocol'] = proto
             init_args['source_port'] = s_port
             init_args['destination_port'] = d_port
@@ -329,6 +329,22 @@ class AccessListEntry:
             return default
 
         return transformed_cond_list
+
+    @staticmethod
+    def _parse_icmp_value(icmp_value, default=None):
+        temp_values = AccessListEntry._parse_conditional_fs_type(icmp_value, default)
+        if temp_values == default:
+            return default
+
+        res = []
+        for val in temp_values:
+            prefix, values = val.split(' ', 1)
+            if prefix == 'eq':
+                res.append(values)
+            elif prefix == 'range':
+                l_border, r_border = map(int, values.split(' '))
+                res.extend(map(str, range(l_border, r_border)))
+        return res
 
     @staticmethod
     def _validate_protocol(proto, raise_exception=True):
@@ -759,11 +775,10 @@ def get_interfaces_md5(interfaces):
 
 
 def run(bgpfs2acl_tool):
-    # threading.Timer(frequency, run, [bgpfs2acl_tool]).start()
+    threading.Timer(frequency, run, [bgpfs2acl_tool]).start()
     to_apply = ''
     flowspec = bgpfs2acl_tool.get_flowspec()
     access_lists = bgpfs2acl_tool.get_access_lists()
-    #  TODO: do not forget to exclude shutdown interfaces
     filtered_interfaces = bgpfs2acl_tool.get_interfaces(filter_regx='^interface (Gig|Ten|Twe|Fo|Hu).*')
 
     if flowspec is None:
@@ -799,8 +814,8 @@ def run(bgpfs2acl_tool):
             for acl in access_lists:
                 if acl.name in bound_acls:
                     acl.apply_flowspec(flowspec)
-                    apply_config = acl.get_changes_config()
-                    to_apply = '\n'.join([to_apply, apply_config])
+                    acl_changes_config = acl.get_changes_config()
+                    to_apply = '\n'.join([to_apply, acl_changes_config])
 
             for interface in to_apply_default_acl:
                 ingress_acl_feature = 'ipv4 access-group {} ingress'.format(bgpfs2acl_tool.default_acl_name)
@@ -819,12 +834,14 @@ def run(bgpfs2acl_tool):
 def clean_script_actions(bgpfs2acl_tool):
     logger.info('###### Reverting applied acl rules... ######')
     access_lists = bgpfs2acl_tool.get_access_lists()
-    to_apply = []
+    to_apply = ''
     for acl in access_lists:
         acl.remove_flowspec()
         apply_config = acl.get_changes_config()
-        to_apply = '\n'.join([to_apply, apply_config])
-    bgpfs2acl_tool.xrapply_string(to_apply)
+        if apply_config:
+            to_apply = '\n'.join([to_apply, apply_config])
+    if to_apply:
+        bgpfs2acl_tool.apply_conf(to_apply)
     logger.info("###### Script execution was complete ######")
 
 
