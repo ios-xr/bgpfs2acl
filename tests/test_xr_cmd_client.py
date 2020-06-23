@@ -4,11 +4,9 @@ import unittest
 
 import pytest
 
-from bgpfs2acl import XRCmdClient
+from xr_cmd_client import XRCmdClient, XRCmdExecError
 
 import logging
-
-from func_lib import XRExecError
 
 logging.disable(logging.WARNING)
 
@@ -107,7 +105,7 @@ def xr_client_fixture(mocker):
 
         mocker.patch('paramiko.SSHClient.connect')
         mocker.patch('paramiko.SSHClient.invoke_shell', return_value=Channel())
-        return XRCmdClient(user=USERNAME_STUB, password=PASSWORD_STUB,host=IP_STUB, port=PORT_STUB)
+        return XRCmdClient(user=USERNAME_STUB, password=PASSWORD_STUB, host=IP_STUB, port=PORT_STUB)
 
     return _xr_client_fixture
 
@@ -183,7 +181,7 @@ Testmachine:~$ echo end of stdOUT buffer. finished with exit status $?
 end of stdOUT buffer. finished with exit status 0
 """
         )
-        with pytest.raises(XRExecError) as excinfo:
+        with pytest.raises(XRCmdExecError) as excinfo:
             xr_client.xrcmd('sh flowspec')
 
         assert str(excinfo.value) == pprint.pformat([
@@ -214,7 +212,7 @@ Testmachine:~$ echo end of stdOUT buffer. finished with exit status $?
 end of stdOUT buffer. finished with exit status 1
 """
         )
-        with pytest.raises(XRExecError) as excinfo:
+        with pytest.raises(XRCmdExecError) as excinfo:
             xr_client.xrapply_string('no ipv4 access-list')
 
         assert str(excinfo.value) == pprint.pformat([
