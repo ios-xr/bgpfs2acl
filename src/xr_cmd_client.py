@@ -36,7 +36,7 @@ class XRCmdClient:
         self.stdout = channel.makefile('r')
 
         # this output was made for cleaning stdout out of info about established ssh connection
-        ready_msg = 'connected succesfully'
+        ready_msg = 'connected successfully'
         self.stdin.write('echo {}\n'.format(ready_msg))
         for line in self.stdout:
             if line.startswith(ready_msg):

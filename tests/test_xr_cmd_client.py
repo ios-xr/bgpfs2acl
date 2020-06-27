@@ -4,7 +4,7 @@ import unittest
 
 import pytest
 
-from xr_cmd_client import XRCmdClient, XRCmdExecError
+from src.xr_cmd_client import XRCmdClient, XRCmdExecError
 
 import logging
 
