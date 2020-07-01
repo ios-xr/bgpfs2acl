@@ -1,32 +1,53 @@
 #!/usr/bin/env python
 from __future__ import unicode_literals, print_function
 
-import argparse
 import re
 
 import sys
-import threading
 
 import logging.config
-import log_conf
+import threading
+from logging.handlers import SysLogHandler
+
+import configargparse as configargparse
+
+from conf import settings
 from access_list import AccessList
 from flowspec import FlowSpec
 from func_lib import get_interfaces_md5
 from xr_cmd_client import XRCmdClient
 
-logging.config.dictConfig(log_conf.LOG_CONFIG)
+logging.config.dictConfig(settings.LOG_CONFIG)
 logger = logging.getLogger(__name__)
 
+def setup_logger(log_level):
+    if any([all([settings.SYSLOG['host'], settings.SYSLOG['port']]), settings.SYSLOG['filename']]):
+        # add handler to the logger
+        if all([settings.SYSLOG['host'], settings.SYSLOG['port']]):
+            remotehandler = logging.handlers.SysLogHandler(
+                address=(settings.SYSLOG['host'],
+                         settings.SYSLOG['port'])
+            )
+            remotehandler.formatter = formatter
+            logger.addHandler(remotehandler)
+
+        if filename is not None:
+            filehandler = logging.FileHandler(filename)
+            filehandler.formatter = formatter
+            logger.addHandler(filehandler)
+
+    else:
+        MAX_SIZE = 1024 * 1024
+        LOG_PATH = "/tmp/ztp_python.log"
+        handler = logging.handlers.RotatingFileHandler(
+            LOG_PATH, maxBytes=MAX_SIZE, backupCount=1)
+        handler.formatter = formatter
+        logger.addHandler(handler)
+    syslog_handler = SysLogHandler(address=(settings.SYSLOG['host'], settings.SYSLOG['port']))
 
 class BgpFs2AclTool:
-    def __init__(self, xr_client, default_acl_name, fs_start_seq):
+    def __init__(self, xr_client):
         self.xr_client = xr_client
-
-        if not (0 < len(default_acl_name) <= 65):
-            raise ValueError('ACL name {} is out length range'.format(default_acl_name))
-        self.default_acl_name = default_acl_name
-
-        self.fs_start_seq = fs_start_seq
 
         self.cached_fs_md5 = None
         self.cached_acl_md5 = None
@@ -103,8 +124,8 @@ class BgpFs2AclTool:
             return self.xr_client.xrapply_string(conf)
 
 
-def run(bgpfs2acl_tool):
-    # threading.Timer(frequency, run, [bgpfs2acl_tool]).start()
+def run(bgpfs2acl_tool, app_config):
+    threading.Timer(app_config.frequency, run, [bgpfs2acl_tool, app_config]).start()
     to_apply = ''
     flowspec = bgpfs2acl_tool.get_flowspec()
     access_lists = bgpfs2acl_tool.get_access_lists()
@@ -144,12 +165,12 @@ def run(bgpfs2acl_tool):
 
             for acl in access_lists:
                 if acl.name in bound_acls:
-                    acl.apply_flowspec(flowspec, bgpfs2acl_tool.fs_start_seq)
+                    acl.apply_flowspec(flowspec, app_config.fs_start_seq)
                     acl_changes_config = acl.get_changes_config()
                     to_apply = '\n'.join([to_apply, acl_changes_config])
 
             for interface in to_apply_default_acl:
-                ingress_acl_feature = 'ipv4 access-group {} ingress'.format(bgpfs2acl_tool.default_acl_name)
+                ingress_acl_feature = 'ipv4 access-group {} ingress'.format(app_config.default_acl_name)
                 to_apply = '\n'.join([to_apply, interface, ingress_acl_feature])
 
             bgpfs2acl_tool.cached_fs_md5 = flowspec.md5
@@ -162,7 +183,7 @@ def run(bgpfs2acl_tool):
         bgpfs2acl_tool.apply_conf(to_apply)
 
 
-def clean_script_actions(bgpfs2acl_tool):
+def clean_acls(bgpfs2acl_tool):
     logger.info('###### Reverting applied acl rules... ######')
     access_lists = bgpfs2acl_tool.get_access_lists()
     to_apply = ''
@@ -176,42 +197,34 @@ def clean_script_actions(bgpfs2acl_tool):
     logger.info("###### Script execution was complete ######")
 
 
-if __name__ == "__main__":
+def main():
     logger.info("###### Starting BGPFS2ACL RUN on XR based device ######")
 
-    parser = argparse.ArgumentParser(description='BGP FlowSpec to ACL converter')
-    parser.add_argument("-v", "--verbose", action="store_true",
-                        help="increase output verbosity")
-    parser.add_argument("-f", "--frequency", dest='frequency', default=30, type=int,
-                        help="set script execution frequency, default value 30 sec")
-    parser.add_argument("--fs_start_seq", help="Define the first sequence to add ACEs generated from Flowspec "
+    parser = configargparse.get_arg_parser(auto_env_var_prefix='fs2acl_', description='BGP FlowSpec to ACL converter')
+    parser.add_argument("--upd-frequency", dest='upd_frequency', default=30, type=int,
+                        help="sets checking flowspec updates frequency, default value 30 sec")
+    parser.add_argument("--fs-start-seq", help="Define the first sequence to add ACEs generated from Flowspec "
                                                "(<1-2147483643>). Default - 100500.",
-                        type=int, default=100500)
+                        type=int, default=100500, dest='fs_start_seq')
     parser.add_argument("--revert", help="Start script in clean up mode", action="store_true")
-    parser.add_argument("--default_acl_name", type=str, default='bgpfs2acl-ipv4',
+    parser.add_argument("--default-acl-name", type=str, default='bgpfs2acl-ipv4',
                         dest='default_acl_name', help="Define default ACL name")
 
-    parser.add_argument("--user", help="User for ssh connection", type=str, required=True)
-    parser.add_argument("--password",
-                        help="Password for ssh connection. Omit if use key authorization.",
-                        type=str,
-                        default='')
-    parser.add_argument("--host", help="Router host address for ssh connection", type=str, default='127.0.0.1')
-    parser.add_argument("--port", help="Router ssh port", type=int, default=57722)
     # Todo add fix line numbers;
     # Todo add verbose story;
 
-    shell_args = parser.parse_args()
+    config = parser.parse_args()
 
-    xr_cmd_client = XRCmdClient(user=shell_args.user, password=shell_args.password, host=shell_args.host,
-                                port=shell_args.port)
+    xr_cmd_client = XRCmdClient(**settings.ROUTER)
 
-    conv_tool = BgpFs2AclTool(xr_client=xr_cmd_client, default_acl_name=shell_args.default_acl_name,
-                              fs_start_seq=shell_args.fs_start_seq)
+    bgpfs2acl_tool = BgpFs2AclTool(xr_client=xr_cmd_client)
 
-    if shell_args.revert:
-        clean_script_actions(conv_tool)
+    if config.revert:
+        clean_acls(bgpfs2acl_tool)
         sys.exit()
-    frequency = shell_args.frequency
 
-    run(conv_tool)
+    run(bgpfs2acl_tool, config)
+
+
+if __name__ == "__main__":
+    main()
