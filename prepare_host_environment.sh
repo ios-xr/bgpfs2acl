@@ -2,13 +2,17 @@
 
 ### This script is made to prepare a host environment for bgpfs2acl script usage ###
 
-set -e
+set +e
+
 username=bgpfs2acl
 
-id -u ${username} 2>&1 > /dev/null
+printf "Checking if user already exist...\n"
+user_exist=$(grep -c ${username} /etc/passwd)
 
-if [[ $? -eq 1 ]]; then
-    printf "Creating new user..."
+set -e
+
+if [ $user_exist -eq 0 ]; then
+    printf "Creating new user...\n"
 
     useradd \
         --system \
@@ -21,6 +25,8 @@ if [[ $? -eq 1 ]]; then
      # generating random password for the newly created user
     head /dev/urandom | tr -dc A-Za-z0-9 | head -c 12 | xargs -I {} echo -e "{}\n{}" | passwd ${username} 2>&1 > /dev/null
     printf "New user created. Username: ${username}\n"
+else
+    printf "User ${username} already exists\n"
 fi
 
 mkdir -p /home/${username}/.ssh

@@ -430,8 +430,12 @@ class AccessList:
             to_apply.extend(access_list_entries)
         to_apply.append(AccessListEntry.create_remark(FLOWSPEC_END_REMARK).rule)
 
-        last_seq, last_statement = self._statements.peekitem()
-        next_free_seq = last_seq + self._seq_step
+        if len(self._statements):
+            last_seq, last_statement = self._statements.peekitem()
+            next_free_seq = last_seq + self._seq_step
+        else:
+            last_statement = None
+            next_free_seq = self._seq_step
 
         permit_all_statement = 'permit ipv4 any any'
         if last_statement == permit_all_statement:
@@ -775,7 +779,7 @@ def get_interfaces_md5(interfaces):
 
 
 def run(bgpfs2acl_tool):
-    threading.Timer(frequency, run, [bgpfs2acl_tool]).start()
+    # threading.Timer(frequency, run, [bgpfs2acl_tool]).start()
     to_apply = ''
     flowspec = bgpfs2acl_tool.get_flowspec()
     access_lists = bgpfs2acl_tool.get_access_lists()
