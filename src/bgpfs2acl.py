@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from __future__ import unicode_literals, print_function
 
+import os
 import re
 
 import sys
@@ -9,49 +10,22 @@ import logging.config
 import threading
 from logging.handlers import SysLogHandler
 
-import configargparse as configargparse
-
-from conf import settings
-from access_list import AccessList
+from conf.settings import log_config, app_config
 from flowspec import FlowSpec
 from func_lib import get_interfaces_md5
+from src.access_list import AccessList
 from xr_cmd_client import XRCmdClient
 
-logging.config.dictConfig(settings.LOG_CONFIG)
+logging.config.dictConfig(log_config)
 logger = logging.getLogger(__name__)
 
-def setup_logger(log_level):
-    if any([all([settings.SYSLOG['host'], settings.SYSLOG['port']]), settings.SYSLOG['filename']]):
-        # add handler to the logger
-        if all([settings.SYSLOG['host'], settings.SYSLOG['port']]):
-            remotehandler = logging.handlers.SysLogHandler(
-                address=(settings.SYSLOG['host'],
-                         settings.SYSLOG['port'])
-            )
-            remotehandler.formatter = formatter
-            logger.addHandler(remotehandler)
-
-        if filename is not None:
-            filehandler = logging.FileHandler(filename)
-            filehandler.formatter = formatter
-            logger.addHandler(filehandler)
-
-    else:
-        MAX_SIZE = 1024 * 1024
-        LOG_PATH = "/tmp/ztp_python.log"
-        handler = logging.handlers.RotatingFileHandler(
-            LOG_PATH, maxBytes=MAX_SIZE, backupCount=1)
-        handler.formatter = formatter
-        logger.addHandler(handler)
-    syslog_handler = SysLogHandler(address=(settings.SYSLOG['host'], settings.SYSLOG['port']))
 
 class BgpFs2AclTool:
     def __init__(self, xr_client):
         self.xr_client = xr_client
 
+        self.cached_filtered_interfaces_md5 = None
         self.cached_fs_md5 = None
-        self.cached_acl_md5 = None
-        self.cached_interfaces_md5 = None
 
     def get_interfaces(self, include_shutdown=False, filter_regx=None):
         """
@@ -124,8 +98,8 @@ class BgpFs2AclTool:
             return self.xr_client.xrapply_string(conf)
 
 
-def run(bgpfs2acl_tool, app_config):
-    threading.Timer(app_config.frequency, run, [bgpfs2acl_tool, app_config]).start()
+def run(bgpfs2acl_tool):
+    threading.Timer(app_config.frequency, run, [bgpfs2acl_tool]).start()
     to_apply = ''
     flowspec = bgpfs2acl_tool.get_flowspec()
     access_lists = bgpfs2acl_tool.get_access_lists()
@@ -197,33 +171,49 @@ def clean_acls(bgpfs2acl_tool):
     logger.info("###### Script execution was complete ######")
 
 
+def setup_syslog():
+    root_logger = logging.getLogger()
+    formatter = logging.Formatter(
+        ('bgpfs2acl: { "loggerName":"%(name)s", "asciTime":"%(asctime)s", "pathName":"%(pathname)s",'
+         '"logRecordCreationTime":"%(created)f", "functionName":"%(funcName)s", "levelNo":"%(levelno)s",'
+         '"lineNo":"%(lineno)d", "levelName":"%(levelname)s", "message":"%(message)s"}')
+    )
+    if any([all([app_config.syslog_host, app_config.syslog_port]), app_config.syslog_filename]):
+        # add handler to the logger
+        if all([app_config.syslog_host, app_config.syslog_port]):
+            remote_handler = logging.handlers.SysLogHandler(
+                address=(app_config.syslog_host,
+                         app_config.syslog_port)
+            )
+            remote_handler.setFormatter(formatter)
+            remote_handler.setLevel(app_config.syslog_loglevel)
+            root_logger.addHandler(remote_handler)
+
+        if app_config.syslog_filename:
+            file_handler = logging.FileHandler(app_config.syslog_filename)
+            file_handler.setFormatter(formatter)
+            file_handler.setLevel(app_config.syslog_loglevel)
+            root_logger.addHandler(file_handler)
+    else:
+        log_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'log', 'bgpfs2acl.log')
+        if not os.path.exists(os.path.dirname(log_path)):
+            os.makedirs(os.path.dirname(log_path))
+        handler = logging.handlers.TimedRotatingFileHandler(log_path, when='D', interval=1, backupCount=7)
+        handler.setFormatter(formatter)
+        handler.setLevel(logging.INFO)
+        root_logger.addHandler(handler)
+
+
 def main():
+    setup_syslog()
     logger.info("###### Starting BGPFS2ACL RUN on XR based device ######")
-
-    parser = configargparse.get_arg_parser(auto_env_var_prefix='fs2acl_', description='BGP FlowSpec to ACL converter')
-    parser.add_argument("--upd-frequency", dest='upd_frequency', default=30, type=int,
-                        help="sets checking flowspec updates frequency, default value 30 sec")
-    parser.add_argument("--fs-start-seq", help="Define the first sequence to add ACEs generated from Flowspec "
-                                               "(<1-2147483643>). Default - 100500.",
-                        type=int, default=100500, dest='fs_start_seq')
-    parser.add_argument("--revert", help="Start script in clean up mode", action="store_true")
-    parser.add_argument("--default-acl-name", type=str, default='bgpfs2acl-ipv4',
-                        dest='default_acl_name', help="Define default ACL name")
-
-    # Todo add fix line numbers;
-    # Todo add verbose story;
-
-    config = parser.parse_args()
-
-    xr_cmd_client = XRCmdClient(**settings.ROUTER)
-
+    xr_cmd_client = XRCmdClient(app_config.user, app_config.password, app_config.router_host, app_config.router_port)
     bgpfs2acl_tool = BgpFs2AclTool(xr_client=xr_cmd_client)
-
-    if config.revert:
+    if app_config.revert:
         clean_acls(bgpfs2acl_tool)
         sys.exit()
 
-    run(bgpfs2acl_tool, config)
+    run(bgpfs2acl_tool)
 
 
 if __name__ == "__main__":
