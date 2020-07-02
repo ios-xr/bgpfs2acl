@@ -779,7 +779,7 @@ def get_interfaces_md5(interfaces):
 
 
 def run(bgpfs2acl_tool):
-    # threading.Timer(frequency, run, [bgpfs2acl_tool]).start()
+    threading.Timer(frequency, run, [bgpfs2acl_tool]).start()
     to_apply = ''
     flowspec = bgpfs2acl_tool.get_flowspec()
     access_lists = bgpfs2acl_tool.get_access_lists()
@@ -817,7 +817,7 @@ def run(bgpfs2acl_tool):
 
             for acl in access_lists:
                 if acl.name in bound_acls:
-                    acl.apply_flowspec(flowspec)
+                    acl.apply_flowspec(flowspec, bgpfs2acl_tool.fs_start_seq)
                     acl_changes_config = acl.get_changes_config()
                     to_apply = '\n'.join([to_apply, acl_changes_config])
 
