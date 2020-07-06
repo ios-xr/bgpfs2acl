@@ -1,3 +1,4 @@
+from __future__ import unicode_literals
 import io
 import pprint
 import unittest
@@ -101,7 +102,7 @@ def xr_client_fixture(mocker):
                 pass
 
             def makefile(self, flag):
-                return io.BytesIO(response_stream)
+                return io.StringIO(response_stream)
 
         mocker.patch('paramiko.SSHClient.connect')
         mocker.patch('paramiko.SSHClient.invoke_shell', return_value=Channel())
@@ -114,8 +115,8 @@ class TestXRCmdClient:
     def test_xrcmd_success(self, xr_client_fixture):
         xr_client = xr_client_fixture("""Last login: Tue Mar 31 22:51:39 2020 from 1.2.3.4
 Test 123
-Testmachine:~$ echo connected succesfully
-connected succesfully
+Testmachine:~$ echo connected successfully
+connected successfully
 Testmachine:~$ sudo su - root -c "source /pkg/bin/ztp_helper.sh && xrcmd \'sh flowspec ipv4\'"
 echo end of stdOUT buffer. finished with exit status $?
 
@@ -139,8 +140,8 @@ end of stdOUT buffer. finished with exit status 0
     def test_xrapply_string_success(self, xr_client_fixture):
         xr_client = xr_client_fixture("""Last login: Tue Mar 31 22:51:39 2020 from 1.2.3.4
 Test test test
-Testmachine:~$ echo connected succesfully
-connected succesfully
+Testmachine:~$ echo connected successfully
+connected successfully
 Testmachine:~$ sudo su - root -c "source /pkg/bin/ztp_helper.sh && xrapply_string \'no ipv4 access-list bgpfs2acl-ipv4
 > ipv4 access-list bgpfs2acl-ipv4
 > 10010 deny  17 any 7.7.7.7/32 eq 111
@@ -170,8 +171,8 @@ ipv4 access-list bgpfs2acl-ipv4
         xr_client = xr_client_fixture(
             """Last login: Tue Mar 31 22:51:39 2020 from 1.2.3.4
 Test 123
-Testmachine:~$ echo connected succesfully
-connected succesfully
+Testmachine:~$ echo connected successfully
+connected successfully
 Testmachine:~$ sudo su - root -c "source /pkg/bin/ztp_helper.sh && xrcmd \'sh flowspec\'"
 echo end of stdOUT buffer. finished with exit status $?
 showtech_helper error: Parsing of command "sh flowspec " failed
@@ -194,8 +195,8 @@ end of stdOUT buffer. finished with exit status 0
         xr_client = xr_client_fixture(
             """Last login: Tue Mar 31 22:51:39 2020 from 1.2.3.4
 Test 123
-Testmachine:~$ echo connected succesfully
-connected succesfully
+Testmachine:~$ echo connected successfully
+connected successfully
 Testmachine:~$ sudo su - root -c "source /pkg/bin/ztp_helper.sh && xrapply_string \'no ipv4 access-list\'"
 echo end of stdOUT buffer. finished with exit status $?
 + (Applying configuration) no ipv4 access-list

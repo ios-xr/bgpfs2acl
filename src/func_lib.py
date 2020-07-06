@@ -1,7 +1,5 @@
+from __future__ import unicode_literals
 import hashlib
-import logging
-
-logger = logging.getLogger(__name__)
 
 
 def is_ipv4_subnet(ip_address):
@@ -21,18 +19,6 @@ def is_ipv4_subnet(ip_address):
         return False
 
     return True
-
-
-def get_acl_md5(access_lists):
-    acl_raw_str = ''
-    for acl in access_lists:
-        acl_raw_str = '\n'.join([acl_raw_str, acl.rules()])
-    return hashlib.md5(acl_raw_str).hexdigest()
-
-
-def get_fs_md5(fs):
-    if fs:
-        return hashlib.md5('\n'.join(fs.raw_config)).hexdigest()
 
 
 def get_interfaces_md5(interfaces):

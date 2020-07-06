@@ -17,19 +17,19 @@ class TestBgpFs2AclTool:
                             'ipv4 address 10.30.111.177 255.255.255.224',
                             'lldp',
                             'enable',
-                            'ipv4 access-group bgpfs2acl-ipv4 ingress',
+                            'ipv4 access-group bgpfs2acl-test ingress',
                         ],
                         'interface TenGigE0/0/0/0': [
                             'shutdown',
                         ],
                         'interface TenGigE0/0/0/1': [
-                            'ipv4 access-group bgpfs2acl-ipv4 ingress',
+                            'ipv4 access-group bgpfs2acl-test ingress',
                         ],
                         'interface TenGigE0/0/0/2': [
                             'shutdown',
                         ],
                         'interface TenGigE0/0/0/3': [
-                            'ipv4 access-group bgpfs2acl-ipv4 ingress',
+                            'ipv4 access-group bgpfs2acl-test ingress',
                         ]
                     },
                     {
@@ -37,13 +37,13 @@ class TestBgpFs2AclTool:
                             'ipv4 address 10.30.111.177 255.255.255.224',
                             'lldp',
                             'enable',
-                            'ipv4 access-group bgpfs2acl-ipv4 ingress',
+                            'ipv4 access-group bgpfs2acl-test ingress',
                         ],
                         'interface TenGigE0/0/0/1': [
-                            'ipv4 access-group bgpfs2acl-ipv4 ingress',
+                            'ipv4 access-group bgpfs2acl-test ingress',
                         ],
                         'interface TenGigE0/0/0/3': [
-                            'ipv4 access-group bgpfs2acl-ipv4 ingress',
+                            'ipv4 access-group bgpfs2acl-test ingress',
                         ]
                     }
             ),
@@ -64,12 +64,12 @@ class TestBgpFs2AclTool:
             (  # Case 3: only acl
                     {
                         'interface TenGigE0/0/0/1': [
-                            'ipv4 access-group bgpfs2acl-ipv4 ingress',
+                            'ipv4 access-group bgpfs2acl-test ingress',
                         ],
                     },
                     {
                         'interface TenGigE0/0/0/1': [
-                            'ipv4 access-group bgpfs2acl-ipv4 ingress',
+                            'ipv4 access-group bgpfs2acl-test ingress',
                         ],
                     }
             ),
@@ -84,7 +84,7 @@ class TestBgpFs2AclTool:
         fs_start_seq = 100500
         xr_client_mock = mocker.patch('src.xr_cmd_client.XRCmdClient')
         mocker.patch('src.bgpfs2acl.BgpFs2AclTool.get_interfaces', return_value=interfaces_list)
-        tool = BgpFs2AclTool(xr_client_mock, DEFAULT_ACL_NAME, fs_start_seq)
+        tool = BgpFs2AclTool(xr_client_mock)
         result = tool.get_interfaces_by_acl_name(DEFAULT_ACL_NAME)
 
         assert result == expected
@@ -104,14 +104,14 @@ shutdown
 !
 interface TenGigE0/0/0/1
 shutdown
-ipv4 access-group bgpfs2acl-ipv4 ingress
+ipv4 access-group bgpfs2acl-test ingress
 !
 interface TenGigE0/0/0/2
-ipv4 access-group bgpfs2acl-ipv4 ingress
+ipv4 access-group bgpfs2acl-test ingress
 shutdown
 !
 interface TenGigE0/0/0/11
-ipv4 access-group bgpfs2acl-ipv4 ingress
+ipv4 access-group bgpfs2acl-test ingress
 !'''.split('\n'),
                     {
                         'interface MgmtEth0/RP0/CPU0/0': [
@@ -124,14 +124,14 @@ ipv4 access-group bgpfs2acl-ipv4 ingress
                         ],
                         'interface TenGigE0/0/0/1': [
                             'shutdown',
-                            'ipv4 access-group bgpfs2acl-ipv4 ingress',
+                            'ipv4 access-group bgpfs2acl-test ingress',
                         ],
                         'interface TenGigE0/0/0/2': [
-                            'ipv4 access-group bgpfs2acl-ipv4 ingress',
+                            'ipv4 access-group bgpfs2acl-test ingress',
                             'shutdown',
                         ],
                         'interface TenGigE0/0/0/11': [
-                            'ipv4 access-group bgpfs2acl-ipv4 ingress',
+                            'ipv4 access-group bgpfs2acl-test ingress',
                         ]
                     },
                     True
@@ -144,15 +144,15 @@ enable
 !
 !
 interface TenGigE0/0/0/2
-ipv4 access-group bgpfs2acl-ipv4 ingress
+ipv4 access-group bgpfs2acl-test ingress
 shutdown
 !
 interface TenGigE0/0/0/3
 shutdown
-ipv4 access-group bgpfs2acl-ipv4 ingress
+ipv4 access-group bgpfs2acl-test ingress
 !
 interface TenGigE0/0/0/11
-ipv4 access-group bgpfs2acl-ipv4 ingress
+ipv4 access-group bgpfs2acl-test ingress
 !'''.split('\n'),
                     {
                         'interface MgmtEth0/RP0/CPU0/0': [
@@ -161,23 +161,23 @@ ipv4 access-group bgpfs2acl-ipv4 ingress
                             'enable',
                         ],
                         'interface TenGigE0/0/0/11': [
-                            'ipv4 access-group bgpfs2acl-ipv4 ingress',
+                            'ipv4 access-group bgpfs2acl-test ingress',
                         ]
                     },
                     False
             ),
             (  # Case 3: only with shutdown
                     '''interface TenGigE0/0/0/2
-ipv4 access-group bgpfs2acl-ipv4 ingress
+ipv4 access-group bgpfs2acl-test ingress
 shutdown
 !
 interface TenGigE0/0/0/3
 shutdown
-ipv4 access-group bgpfs2acl-ipv4 ingress
+ipv4 access-group bgpfs2acl-test ingress
 !
 interface TenGigE0/0/0/11
 shutdown
-ipv4 access-group bgpfs2acl-ipv4 ingress
+ipv4 access-group bgpfs2acl-test ingress
 !'''.split('\n'),
                     {},
                     False
@@ -192,7 +192,7 @@ ipv4 access-group bgpfs2acl-ipv4 ingress
     def test_get_interfaces(self, mocker, test_input, expected, with_shutdown):
         xr_client_mock = mocker.patch('src.xr_cmd_client.XRCmdClient')
         mocker.patch('src.xr_cmd_client.XRCmdClient.xrcmd', return_value=test_input)
-        tool = BgpFs2AclTool(xr_client_mock, )
+        tool = BgpFs2AclTool(xr_client_mock)
         result = tool.get_interfaces(with_shutdown)
 
         assert result == expected

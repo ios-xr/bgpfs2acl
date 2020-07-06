@@ -405,17 +405,14 @@ class AccessList:
         if statement:
             self._changes.append('no {}'.format(seq))
 
-    def apply_flowspec(self, flowspec, fs_start_seq=None):
-        if flowspec.is_empty():
+    def apply_flowspec(self, fs_ace_list, fs_start_seq=None):
+        if not fs_ace_list:
             return
 
-        if self._fs_start:
-            self.remove_flowspec()
+        self.remove_flowspec()
 
         to_apply = [AccessListEntry.create_remark(FLOWSPEC_START_REMARK).rule]
-        for fs_rule in flowspec.rules:
-            access_list_entries = [ace.rule for ace in AccessListEntry.from_flowspec_rule(fs_rule)]
-            to_apply.extend(access_list_entries)
+        to_apply.extend(fs_ace_list)
         to_apply.append(AccessListEntry.create_remark(FLOWSPEC_END_REMARK).rule)
 
         last_seq, last_statement = self._statements.peekitem()

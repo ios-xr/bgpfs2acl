@@ -1,3 +1,4 @@
+from __future__ import unicode_literals
 import re
 from pprint import pformat
 
@@ -47,11 +48,11 @@ class XRCmdClient:
 
     @staticmethod
     def _print_exec_out(cmd, out_buf):
-        logger.info('XR command executed: {}'.format(cmd))
+        logger.debug('XR command executed: {}'.format(cmd))
         if out_buf:
-            logger.info('OUTPUT:')
-            logger.info(pformat(out_buf))
-            logger.info('end of OUTPUT')
+            logger.debug('OUTPUT:')
+            logger.debug(pformat(out_buf))
+            logger.debug('end of OUTPUT')
 
     def _exec_xr_func(self, xr_func, xr_arg):
         """

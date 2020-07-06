@@ -49,6 +49,10 @@ class FlowSpecRule:
         return raw_flow, raw_actions
 
     @property
+    def flow(self):
+        return self._raw_flow
+
+    @property
     def actions(self):
         return self._raw_actions
 
@@ -62,7 +66,7 @@ class FlowSpecRule:
     def from_config(cls, raw_flow, raw_actions):
         raw_flow, raw_actions = cls._validate(raw_flow, raw_actions)
 
-        if not raw_flow or not raw_actions:
+        if not (raw_flow and raw_actions):
             return None
 
         flowspec = cls()

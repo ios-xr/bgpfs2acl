@@ -13,7 +13,7 @@ from logging.handlers import SysLogHandler
 from conf.settings import log_config, app_config
 from flowspec import FlowSpec
 from func_lib import get_interfaces_md5
-from src.access_list import AccessList
+from src.access_list import AccessList, AccessListEntry
 from xr_cmd_client import XRCmdClient
 
 logging.config.dictConfig(log_config)
@@ -35,7 +35,6 @@ class BgpFs2AclTool:
         :param filter_regx:
         :return:
         """
-        logger.info("Getting Interfaces")
         interfaces = self.xr_client.xrcmd("sh running interface")
         interfaces_dict = {}
         for i, line in enumerate(interfaces):
@@ -98,6 +97,18 @@ class BgpFs2AclTool:
             return self.xr_client.xrapply_string(conf)
 
 
+def convert_flowspec_to_acl_rules(flowspec):
+    converted_rules = []
+    for fs_rule in flowspec.rules:
+        access_list_entries = [ace.rule for ace in AccessListEntry.from_flowspec_rule(fs_rule)]
+        if not access_list_entries:
+            logger.warning(
+                "Skipping Flow: {}, Action: {}. Unsupported flowspec features.".format(fs_rule.flow, fs_rule.actions)
+            )
+        converted_rules.extend(access_list_entries)
+    return converted_rules
+
+
 def run(bgpfs2acl_tool):
     threading.Timer(app_config.frequency, run, [bgpfs2acl_tool]).start()
     to_apply = ''
@@ -106,7 +117,9 @@ def run(bgpfs2acl_tool):
     filtered_interfaces = bgpfs2acl_tool.get_interfaces(filter_regx='^interface (Gig|Ten|Twe|Fo|Hu).*')
 
     if flowspec is None:
+        logger.warning('Flowspec is empty/was not found.')
         if bgpfs2acl_tool.cached_fs_md5:
+            logger.warning('Removing fs rules from access-lists...')
             for acl in access_lists:
                 acl.remove_flowspec()
                 remove_fs_conf = acl.get_changes_config()
@@ -139,7 +152,8 @@ def run(bgpfs2acl_tool):
 
             for acl in access_lists:
                 if acl.name in bound_acls:
-                    acl.apply_flowspec(flowspec, app_config.fs_start_seq)
+                    converted_flowspec_rules = convert_flowspec_to_acl_rules(flowspec)
+                    acl.apply_flowspec(converted_flowspec_rules, app_config.fs_start_seq)
                     acl_changes_config = acl.get_changes_config()
                     to_apply = '\n'.join([to_apply, acl_changes_config])
 
@@ -158,7 +172,7 @@ def run(bgpfs2acl_tool):
 
 
 def clean_acls(bgpfs2acl_tool):
-    logger.info('###### Reverting applied acl rules... ######')
+    logger.info('###### Reverting applied converted flowspec rules... ######')
     access_lists = bgpfs2acl_tool.get_access_lists()
     to_apply = ''
     for acl in access_lists:
