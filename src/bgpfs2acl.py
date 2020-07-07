@@ -110,7 +110,7 @@ def convert_flowspec_to_acl_rules(flowspec):
 
 
 def run(bgpfs2acl_tool):
-    threading.Timer(app_config.frequency, run, [bgpfs2acl_tool]).start()
+    threading.Timer(app_config.upd_frequency, run, [bgpfs2acl_tool]).start()
     to_apply = ''
     flowspec = bgpfs2acl_tool.get_flowspec()
     access_lists = bgpfs2acl_tool.get_access_lists()
@@ -122,7 +122,7 @@ def run(bgpfs2acl_tool):
             logger.warning('Removing fs rules from access-lists...')
             for acl in access_lists:
                 acl.remove_flowspec()
-                remove_fs_conf = acl.get_changes_config()
+                remove_fs_conf = acl.get_changes_config() or ''
                 to_apply = ''.join([to_apply, remove_fs_conf])
 
             bgpfs2acl_tool.cached_fs_md5 = None
