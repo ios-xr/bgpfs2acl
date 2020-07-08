@@ -150,9 +150,9 @@ def run(bgpfs2acl_tool):
                     access_lists.append(AccessList(bgpfs2acl_tool.default_acl_name))
                 bound_acls.add(bgpfs2acl_tool.default_acl_name)
 
+            converted_flowspec_rules = convert_flowspec_to_acl_rules(flowspec)
             for acl in access_lists:
                 if acl.name in bound_acls:
-                    converted_flowspec_rules = convert_flowspec_to_acl_rules(flowspec)
                     acl.apply_flowspec(converted_flowspec_rules, app_config.fs_start_seq)
                     acl_changes_config = acl.get_changes_config()
                     to_apply = '\n'.join([to_apply, acl_changes_config])
