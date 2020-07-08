@@ -122,8 +122,9 @@ def run(bgpfs2acl_tool):
             logger.warning('Removing fs rules from access-lists...')
             for acl in access_lists:
                 acl.remove_flowspec()
-                remove_fs_conf = acl.get_changes_config() or ''
-                to_apply = ''.join([to_apply, remove_fs_conf])
+                remove_fs_conf = acl.get_changes_config()
+                if remove_fs_conf:
+                    to_apply = ''.join([to_apply, remove_fs_conf])
 
             bgpfs2acl_tool.cached_fs_md5 = None
 
@@ -155,7 +156,8 @@ def run(bgpfs2acl_tool):
                 if acl.name in bound_acls:
                     acl.apply_flowspec(converted_flowspec_rules, app_config.fs_start_seq)
                     acl_changes_config = acl.get_changes_config()
-                    to_apply = '\n'.join([to_apply, acl_changes_config])
+                    if acl_changes_config:
+                        to_apply = '\n'.join([to_apply, acl_changes_config])
 
             for interface in to_apply_default_acl:
                 ingress_acl_feature = 'ipv4 access-group {} ingress'.format(app_config.default_acl_name)
