@@ -261,7 +261,7 @@ class AccessListEntry:
 
     @staticmethod
     def _parse_flowspec_action(action):
-        if FlowSpecRule.DENY_ACTION in action:
+        if FlowSpecRule.Actions.deny.value in action:
             return AccessListEntry.Command.deny.value
 
     @staticmethod

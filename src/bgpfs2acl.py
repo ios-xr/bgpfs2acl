@@ -146,10 +146,10 @@ def run(bgpfs2acl_tool):
                     to_apply_default_acl.append(interface)
 
             if to_apply_default_acl:
-                default_acl = [acl for acl in access_lists if acl.name == bgpfs2acl_tool.default_acl_name]
+                default_acl = [acl for acl in access_lists if acl.name == app_config.default_acl_name]
                 if not default_acl:
-                    access_lists.append(AccessList(bgpfs2acl_tool.default_acl_name))
-                bound_acls.add(bgpfs2acl_tool.default_acl_name)
+                    access_lists.append(AccessList(app_config.default_acl_name))
+                bound_acls.add(app_config.default_acl_name)
 
             converted_flowspec_rules = convert_flowspec_to_acl_rules(flowspec)
             for acl in access_lists:
