@@ -38,7 +38,6 @@ class FlowSpecRule:
         raw_flow = raw_flow.split(':', 1)[1]
         raw_actions = raw_actions.split(':', 1)[1]
 
-        raw_flow = raw_flow.split(',')
         # feature_names = [f.value for f in FlowSpecRule.FeatureNames.__members__.values()]
         # for feature in raw_flow:
         #     split_feature = feature.split(':', 1)
@@ -64,6 +63,9 @@ class FlowSpecRule:
 
         return self._flow_features.get(feature_name, None)
 
+    def features_iter(self):
+        return self._flow_features.iteritems()
+
     @classmethod
     def from_config(cls, raw_flow, raw_actions):
         raw_flow, raw_actions = cls._validate(raw_flow, raw_actions)
@@ -74,6 +76,7 @@ class FlowSpecRule:
         flowspec = cls()
         flowspec._raw_flow = raw_flow
         flowspec._raw_actions = raw_actions
+        raw_flow = raw_flow.split(',')
         for feature in raw_flow:
             split_feature = feature.split(':', 1)
             feature_name = split_feature[0]

@@ -1,5 +1,6 @@
 from __future__ import unicode_literals
 
+import logging
 import re
 import socket
 from itertools import product
@@ -8,6 +9,8 @@ from enum import Enum
 from sortedcontainers import SortedDict
 
 from src.flowspec import FlowSpecRule
+
+logger = logging.getLogger(__name__)
 
 ICMP_TYPE_CODENAMES = {
     'administratively-prohibited',
@@ -56,14 +59,29 @@ ICMP_TYPE_CODENAMES = {
     'unreachable',
 }
 
-ALLOWED_PROTOCOLS = {
-    'icmp': '1',
-    'tcp': '6',
-    'udp': '17',
+ALLOWED_PROTOCOLS = {'icmp', '1', 'tcp', '6', 'udp', '17', 'ipv4'}
+
+ICMP_PROTOCOL_VALUES = {'icmp', '1'}
+
+IPV4_PROTOCOL_VALUE = 'ipv4'
+
+
+ALLOWED_FS_KEYWORDS = {
+    'Source',
+    'Dest',
+    'Proto',
+    'DPort',
+    'SPort',
+    'ICMPType',
+    'ICMPCode',
 }
 
 FLOWSPEC_START_REMARK = "FLOWSPEC RULES BEGIN. Do not add statements below this. Added automatically."
 FLOWSPEC_END_REMARK = "FLOWSPEC RULES END"
+
+
+class ACLValidationError(StandardError):
+    pass
 
 
 class AccessListEntry:
@@ -73,18 +91,18 @@ class AccessListEntry:
         remark = 'remark'
 
     def __init__(self, command, protocol=None, source_ip=None, source_port=None, destination_ip=None,
-                 destination_port=None, icmp_type=None, icmp_code=None, commentary=None):
+                 destination_port=None, icmp_type=None, icmp_code=None, nexthop_ip=None, commentary=None):
         if command not in [c.value for c in AccessListEntry.Command.__members__.values()]:
-            raise ValueError('Passed wrong ACL command: {}'.format(command))
+            raise ACLValidationError('Passed wrong ACL command: {}'.format(command))
         self._command = command
 
         if command == AccessListEntry.Command.remark.value:
             if commentary is None:
-                raise ValueError("remark: no commentary provided.")
+                raise ACLValidationError("remark: no commentary provided.")
             self._commentary = commentary
             return
 
-        self._protocol = self._validate_protocol(protocol, raise_exception=True)
+        self._protocol = self._validate_protocol(protocol)
 
         self._source_ip = self.validate_ip(source_ip)
         self._source_port = self.validate_rangeable_features(source_port)
@@ -92,35 +110,50 @@ class AccessListEntry:
         self._destination_ip = self.validate_ip(destination_ip)
         self._destination_port = self.validate_rangeable_features(destination_port)
 
+        if (self._protocol in ICMP_PROTOCOL_VALUES or self._protocol == IPV4_PROTOCOL_VALUE) \
+                and (self._source_port or self._destination_port):
+            raise ACLValidationError(
+                "Protocol {} can't be used with source or destination port.".format(self._protocol)
+            )
+
         self._icmp_type = None
-        if self._protocol in ('icmp', ALLOWED_PROTOCOLS['icmp']) and icmp_type is not None:
+        if self._protocol in ICMP_PROTOCOL_VALUES and icmp_type is not None:
             if ((isinstance(icmp_type, int) or icmp_type.isdigit()) and not 0 <= int(icmp_type) <= 255) \
                     and icmp_type not in ICMP_TYPE_CODENAMES:
-                raise ValueError('Wrong icmp_type value: {}'.format(icmp_type))
+                raise ACLValidationError('Wrong icmp_type value: {}'.format(icmp_type))
             self._icmp_type = icmp_type
 
         self._icmp_code = None
-        if self._icmp_type and icmp_code is not None:
+        if self._icmp_type and icmp_code:
             if (isinstance(icmp_code, int) or icmp_code.isdigit()) and not 0 <= int(icmp_code) <= 255:
-                raise ValueError('Wrong icmp_code value: {}'.format(icmp_code))
+                raise ACLValidationError('Wrong icmp_code value: {}'.format(icmp_code))
             self._icmp_code = icmp_code
+
+        self._nexthop_ip = self._validate_nexthop_ip(nexthop_ip)
+
+    def _validate_nexthop_ip(self, nexthop_ip):
+        if not nexthop_ip:
+            return None
+
+        if self._command != AccessListEntry.Command.permit.value:
+            raise ACLValidationError("Wrong command: {}. Nexthop can be used only with permit acl command.".format(self._command))
+        try:
+            socket.inet_aton(nexthop_ip)
+        except socket.error:
+            raise ACLValidationError('Wrong nexthop ip format: {}'.format(nexthop_ip))
+
+        nexthop_ip = 'nexthop1 ipv4 {}'.format(nexthop_ip)
+        return nexthop_ip
 
     def _generate_rule(self):
         if self._command == AccessListEntry.Command.remark.value:
             return ' '.join([self._command, self._commentary])
 
         features = [self._command, self._protocol, self._source_ip, self._source_port,
-                    self._destination_ip, self._destination_port]  # order is important
+                    self._destination_ip, self._destination_port, self._icmp_type, self._icmp_code,
+                    self._nexthop_ip]  # order is important
 
         features = [str(i) for i in features if i is not None]  # removed all empty fields
-
-        keyword_features = []
-        if self._icmp_type:
-            keyword_features.append(self._icmp_type)
-        if self._icmp_code:
-            keyword_features.append(self._icmp_code)
-
-        features.extend(keyword_features)
 
         return ' '.join(features)
 
@@ -139,11 +172,11 @@ class AccessListEntry:
         else:
             ip_address = features_list[0].split('/')
             if len(ip_address) != 2 or int(ip_address[1]) > 32:
-                raise ValueError('Bad ip format: {}'.format(features_list[0]))
+                raise ACLValidationError('Invalid ip format: {}'.format(features_list[0]))
             try:
                 socket.inet_aton(ip_address[0])
             except socket.error:
-                raise ValueError('Bad ip: {}'.format(ip_address))
+                raise ACLValidationError('Invalid ip address passed: {}'.format(ip_address))
             res = features_list.pop(0)
         return res
 
@@ -174,7 +207,7 @@ class AccessListEntry:
 
             for value in to_check:
                 if not value.isdigit() or not 0 < int(value) < 65536:
-                    raise ValueError('Passed wrong feature value: {}'.format(values_list))
+                    raise ACLValidationError('Passed wrong feature value: {}'.format(values_list))
 
         return values_list
 
@@ -183,23 +216,29 @@ class AccessListEntry:
         if ip is None:
             return 'any'
 
-        ip_components = ip.split('/')
-        if len(ip_components) == 2 and ip_components[1] == '32':
-            return 'host {}'.format(ip_components[0])
-
-        if ip == 'any' or 'host ' in ip:
+        if ip == 'any' or ip.startswith('host '):
             return ip
 
-        raise ValueError('Wrong ip parameter: {}'.format(ip))
+        ip_components = ip.split('/')
+
+        if len(ip_components) != 2 or not (0 < int(ip_components[1]) < 33):
+            raise ACLValidationError('Invalid ip parameter: {}'.format(ip))
+
+        try:
+            socket.inet_aton(ip_components[0])
+        except socket.error:
+            raise ACLValidationError('Invalid ip parameter: {}'.format(ip))
+
+        return ip
 
     @staticmethod
     def _validate_protocol_list(protocols):
         if not protocols:
-            return []
+            return [IPV4_PROTOCOL_VALUE]
 
         validated = []
         for proto in protocols:
-            proto = AccessListEntry._validate_protocol(proto, raise_exception=False)
+            proto = AccessListEntry._validate_protocol(proto)
             if proto:
                 validated.append(proto)
         return validated
@@ -210,59 +249,72 @@ class AccessListEntry:
 
         init_args = {}
 
-        action = AccessListEntry._parse_flowspec_action(flowspec_rule.actions)
-        if not action:
+        errors = {}
+
+        protocol_list = [IPV4_PROTOCOL_VALUE]
+        source_port_list = [None]
+        destination_port_list = [None]
+
+        for key, value in flowspec_rule.features_iter():
+            try:
+                if key == FlowSpecRule.FeatureNames.source_ip.value:
+                    init_args['source_ip'] = value
+                elif key == FlowSpecRule.FeatureNames.destination_ip.value:
+                    init_args['destination_ip'] = value
+
+                elif key == FlowSpecRule.FeatureNames.protocol.value:
+                    protocol_list = AccessListEntry._parse_flowspec_protocol(value)
+                    protocol_list = AccessListEntry._validate_protocol_list(protocol_list)
+
+                elif key == FlowSpecRule.FeatureNames.source_port.value:
+                    source_port_list = AccessListEntry._parse_conditional_fs_type(value, default=[None])
+
+                elif key == FlowSpecRule.FeatureNames.destination_port.value:
+                    destination_port_list = AccessListEntry._parse_conditional_fs_type(value, default=[None])
+
+                elif key == FlowSpecRule.FeatureNames.icmp_type.value:
+                    init_args['icmp_type'] = AccessListEntry._parse_icmp_value(value)
+
+                elif key == FlowSpecRule.FeatureNames.icmp_code.value:
+                    init_args['icmp_code'] = AccessListEntry._parse_icmp_value(value)
+                else:
+                    errors.update({key: "Unsupported keyword"})
+            except ACLValidationError as err:
+                errors.update({key: str(err)})
+
+        try:
+            init_args['command'], init_args['nexthop_ip'] = AccessListEntry._parse_flowspec_action(flowspec_rule.actions)
+        except ACLValidationError as err:
+            errors.update({'action': str(err)})
+
+        if errors:
+            errors = ';'.join(('{}: {}'.format(key, value) for key, value in errors.iteritems()))
+            logger.info("Failed to convert flow: {}. Errors: {}".format(flowspec_rule.flow, errors))
             return []
-        init_args['command'] = action
-
-        init_args['source_ip'] = flowspec_rule.get_feature(FlowSpecRule.FeatureNames.source_ip.value)
-        init_args['destination_ip'] = flowspec_rule.get_feature(FlowSpecRule.FeatureNames.destination_ip.value)
-
-        protocol_list = AccessListEntry._parse_flowspec_protocol(
-            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.protocol.value)
-        )
-        protocol_list = cls._validate_protocol_list(protocol_list)
-
-        source_port_list = AccessListEntry._parse_conditional_fs_type(
-            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.source_port.value),
-            default=[None]
-        )
-
-        destination_port_list = AccessListEntry._parse_conditional_fs_type(
-            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.destination_port.value),
-            default=[None]
-        )
-
-        icmp_type = AccessListEntry._parse_icmp_value(
-            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.icmp_type.value),
-            default=[None]
-        )
-
-        icmp_code = AccessListEntry._parse_icmp_value(
-            flowspec_rule.get_feature(FlowSpecRule.FeatureNames.icmp_code.value),
-            default=[None]
-        )
-
-        #  ACL doesn't support ranges of icmp types/codes, therefore skipping
-        if len(icmp_type) > 1 or len(icmp_code) > 1:
-            return []
-        else:
-            init_args['icmp_type'] = icmp_type[0]
-            init_args['icmp_code'] = icmp_code[0]
 
         features_iter = product(protocol_list, source_port_list, destination_port_list)
         for proto, s_port, d_port in features_iter:
-            # TODO: fix for ICMP (icmp codes incompatible with ports)
             init_args['protocol'] = proto
             init_args['source_port'] = s_port
             init_args['destination_port'] = d_port
-            result_acl_rules.append(cls(**init_args))
+            try:
+                result_acl_rules.append(cls(**init_args))
+            except ACLValidationError as err:
+                logger.info("Failed to create ACL entry: {}".format(str(err)))
         return result_acl_rules
 
     @staticmethod
     def _parse_flowspec_action(action):
-        if FlowSpecRule.Actions.deny.value in action:
-            return AccessListEntry.Command.deny.value
+        if action.startswith(FlowSpecRule.Actions.deny.value):
+            return AccessListEntry.Command.deny.value, None
+        elif action.startswith(FlowSpecRule.Actions.nexthop.value):
+            nexthop_ip = action.split(' ')[1]
+            try:
+                socket.inet_aton(nexthop_ip)
+            except socket.error:
+                raise ACLValidationError("Unsupported nexthop format: {}".format(nexthop_ip))
+            return AccessListEntry.Command.permit.value, nexthop_ip
+        raise ACLValidationError("Usupported action: {}".format(action))
 
     @staticmethod
     def _parse_flowspec_address(fs_address):
@@ -332,20 +384,22 @@ class AccessListEntry:
             elif prefix == 'range':
                 l_border, r_border = map(int, values.split(' '))
                 res.extend(map(str, range(l_border, r_border)))
-        return res
+
+        #  ACL doesn't support ranges of icmp types/codes, therefore skipping
+        # TODO: change raising to error return
+        if len(res) > 1:
+            raise ACLValidationError("bgpfs2acl doesn't support icmp ranges: {}".format(icmp_value))
+
+        return res[0]
 
     @staticmethod
-    def _validate_protocol(proto, raise_exception=True):
+    def _validate_protocol(proto):
         if proto is None:
-            if raise_exception:
-                raise ValueError('Protocol is required. Allowed protocols: UDP, TCP, ICMP')
-            return None
+            return IPV4_PROTOCOL_VALUE
 
         proto = str(proto)
-        if (proto not in ALLOWED_PROTOCOLS.values()) and (proto not in ALLOWED_PROTOCOLS.keys()):
-            if raise_exception:
-                raise ValueError('Passed wrong protocol value: {}'.format(proto))
-            return None
+        if proto not in ALLOWED_PROTOCOLS:
+            raise ValueError('Passed unsupported protocol value: {}'.format(proto))
 
         return proto
 
@@ -374,6 +428,7 @@ class AccessListEntry:
                 return 'is-fragment'
 
         return default
+
 
 
 class AccessList:

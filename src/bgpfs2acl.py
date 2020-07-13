@@ -101,16 +101,12 @@ def convert_flowspec_to_acl_rules(flowspec):
     converted_rules = []
     for fs_rule in flowspec.rules:
         access_list_entries = [ace.rule for ace in AccessListEntry.from_flowspec_rule(fs_rule)]
-        if not access_list_entries:
-            logger.warning(
-                "Skipping Flow: {}, Action: {}. Unsupported flowspec features.".format(fs_rule.flow, fs_rule.actions)
-            )
         converted_rules.extend(access_list_entries)
     return converted_rules
 
 
 def run(bgpfs2acl_tool):
-    threading.Timer(app_config.upd_frequency, run, [bgpfs2acl_tool]).start()
+    # threading.Timer(app_config.upd_frequency, run, [bgpfs2acl_tool]).start()
     to_apply = ''
     flowspec = bgpfs2acl_tool.get_flowspec()
     access_lists = bgpfs2acl_tool.get_access_lists()
