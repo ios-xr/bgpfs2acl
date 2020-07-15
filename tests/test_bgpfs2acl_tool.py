@@ -1,8 +1,9 @@
 import pytest
 
-from src.bgpfs2acl import BgpFs2AclTool
+from bgpfs2acl import BgpFs2AclTool
 
 DEFAULT_ACL_NAME = 'bgpfs2acl-test'
+
 
 class TestBgpFs2AclTool:
     @pytest.mark.parametrize(
@@ -83,7 +84,7 @@ class TestBgpFs2AclTool:
         interfaces_list = test_input
         fs_start_seq = 100500
         xr_client_mock = mocker.patch('src.xr_cmd_client.XRCmdClient')
-        mocker.patch('src.bgpfs2acl.BgpFs2AclTool.get_interfaces', return_value=interfaces_list)
+        mocker.patch('bgpfs2acl.BgpFs2AclTool.get_interfaces', return_value=interfaces_list)
         tool = BgpFs2AclTool(xr_client_mock)
         result = tool.get_interfaces_by_acl_name(DEFAULT_ACL_NAME)
 

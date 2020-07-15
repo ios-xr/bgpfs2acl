@@ -12,10 +12,10 @@ from logging.handlers import SysLogHandler
 
 from conf import settings
 from conf.settings import log_config, app_config
-from flowspec import FlowSpec
-from func_lib import get_interfaces_md5
+from src.flowspec import FlowSpec
+from src.func_lib import get_interfaces_md5
 from src.access_list import AccessList, AccessListEntry
-from xr_cmd_client import XRCmdClient, XRCmdExecError
+from src.xr_cmd_client import XRCmdClient, XRCmdExecError
 
 logging.config.dictConfig(log_config)
 logger = logging.getLogger(__name__)

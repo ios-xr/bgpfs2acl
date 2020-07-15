@@ -6,4 +6,4 @@ set -e
 username=bgpfs2acl
 script_name=${username}.py
 
-ip netns exec global-vrf python $(pwd)/src/${script_name}
+ip netns exec global-vrf python $(pwd)/${script_name}
