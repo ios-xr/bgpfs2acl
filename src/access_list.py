@@ -498,8 +498,12 @@ class AccessList:
         to_apply.extend(fs_ace_list)
         to_apply.append(AccessListEntry.create_remark(FLOWSPEC_END_REMARK).rule)
 
-        last_seq, last_statement = self._statements.peekitem()
-        next_free_seq = last_seq + self._seq_step
+        if len(self._statements):
+            last_seq, last_statement = self._statements.peekitem()
+            next_free_seq = last_seq + self._seq_step
+        else:
+            last_statement = None
+            next_free_seq = self._seq_step
 
         permit_all_statement = 'permit ipv4 any any'
         if last_statement == permit_all_statement:
