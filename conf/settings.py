@@ -6,6 +6,7 @@ import os
 import configargparse
 from pathlib2 import Path
 
+PACKET_LENGTH_PERMISSION_NAME = "CAN_SET_PACKET_LENGTH"
 LOG_FILE = os.path.join(os.path.abspath(os.path.pardir), 'log', 'bgpfs2acl.log')
 
 # creating path to store logs if it doesn't exist

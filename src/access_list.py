@@ -4,10 +4,10 @@ import logging
 import re
 import socket
 from itertools import product
-
 from enum import Enum
 from sortedcontainers import SortedDict
 
+from conf import settings
 from src.flowspec import FlowSpecRule
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,6 @@ ICMP_PROTOCOL_VALUES = {'icmp', '1'}
 
 IPV4_PROTOCOL_VALUE = 'ipv4'
 
-
 ALLOWED_FS_KEYWORDS = {
     'Source',
     'Dest',
@@ -91,7 +90,8 @@ class AccessListEntry:
         remark = 'remark'
 
     def __init__(self, command, protocol=None, source_ip=None, source_port=None, destination_ip=None,
-                 destination_port=None, icmp_type=None, icmp_code=None, nexthop_ip=None, commentary=None):
+                 destination_port=None, icmp_type=None, icmp_code=None, packet_length=None, fragments=False,
+                 nexthop_ip=None, commentary=None):
         if command not in [c.value for c in AccessListEntry.Command.__members__.values()]:
             raise ACLValidationError('Passed wrong ACL command: {}'.format(command))
         self._command = command
@@ -129,6 +129,10 @@ class AccessListEntry:
                 raise ACLValidationError('Wrong icmp_code value: {}'.format(icmp_code))
             self._icmp_code = icmp_code
 
+        self._packet_length = self._validate_packet_length(packet_length)
+
+        self._fragments = self._validate_fragments(fragments)
+
         self._nexthop_ip = self._validate_nexthop_ip(nexthop_ip)
 
     def _validate_nexthop_ip(self, nexthop_ip):
@@ -136,7 +140,8 @@ class AccessListEntry:
             return None
 
         if self._command != AccessListEntry.Command.permit.value:
-            raise ACLValidationError("Wrong command: {}. Nexthop can be used only with permit acl command.".format(self._command))
+            raise ACLValidationError(
+                "Wrong command: {}. Nexthop can be used only with permit acl command.".format(self._command))
         try:
             socket.inet_aton(nexthop_ip)
         except socket.error:
@@ -149,8 +154,8 @@ class AccessListEntry:
         if self._command == AccessListEntry.Command.remark.value:
             return ' '.join([self._command, self._commentary])
 
-        features = [self._command, self._protocol, self._source_ip, self._source_port,
-                    self._destination_ip, self._destination_port, self._icmp_type, self._icmp_code,
+        features = [self._command, self._protocol, self._source_ip, self._source_port, self._destination_ip,
+                    self._destination_port, self._icmp_type, self._icmp_code, self._packet_length, self._fragments,
                     self._nexthop_ip]  # order is important
 
         features = [str(i) for i in features if i is not None]  # removed all empty fields
@@ -197,19 +202,27 @@ class AccessListEntry:
         return self._generate_rule()
 
     @staticmethod
-    def validate_rangeable_features(values_list):
-        if values_list is None:
-            return values_list
+    def validate_rangeable_features(value):
+        if value is None:
+            return value
 
-        if values_list.startswith('range ') or values_list.startswith('eq '):
-            to_check = values_list.split(' ')[1:]
+        if value.startswith('range ') or value.startswith('eq '):
+            to_check = value.split(' ')[1:]
             to_check = list(to_check)  # to be sure that this is list
 
-            for value in to_check:
-                if not value.isdigit() or not 0 < int(value) < 65536:
-                    raise ACLValidationError('Passed wrong feature value: {}'.format(values_list))
+            for num in to_check:
+                if not num.isdigit() or not 0 < int(num) < 65536:
+                    raise ACLValidationError('Passed invalid feature value: {}'.format(value))
 
-        return values_list
+        return value
+
+    def _validate_packet_length(self, packet_length):
+        packet_length = self.validate_rangeable_features(packet_length)
+
+        if packet_length:
+            packet_length = 'packet-length {}'.format(packet_length)
+
+        return packet_length
 
     @staticmethod
     def validate_ip(ip):
@@ -254,6 +267,7 @@ class AccessListEntry:
         protocol_list = [IPV4_PROTOCOL_VALUE]
         source_port_list = [None]
         destination_port_list = [None]
+        packet_length_list = [None]
 
         for key, value in flowspec_rule.features_iter():
             try:
@@ -272,18 +286,25 @@ class AccessListEntry:
                 elif key == FlowSpecRule.FeatureNames.destination_port.value:
                     destination_port_list = AccessListEntry._parse_conditional_fs_type(value, default=[None])
 
+                elif key == FlowSpecRule.FeatureNames.packet_length.value:
+                    packet_length_list = AccessListEntry._parse_packet_length(value, default=[None])
+
                 elif key == FlowSpecRule.FeatureNames.icmp_type.value:
                     init_args['icmp_type'] = AccessListEntry._parse_icmp_value(value)
 
                 elif key == FlowSpecRule.FeatureNames.icmp_code.value:
                     init_args['icmp_code'] = AccessListEntry._parse_icmp_value(value)
+
+                elif key == FlowSpecRule.FeatureNames.fragment_type.value:
+                    init_args['fragments'] = AccessListEntry._parse_fs_fragment_type(value)
                 else:
                     errors.update({key: "Unsupported keyword"})
             except ACLValidationError as err:
                 errors.update({key: str(err)})
 
         try:
-            init_args['command'], init_args['nexthop_ip'] = AccessListEntry._parse_flowspec_action(flowspec_rule.actions)
+            init_args['command'], init_args['nexthop_ip'] = AccessListEntry._parse_flowspec_action(
+                flowspec_rule.actions)
         except ACLValidationError as err:
             errors.update({'action': str(err)})
 
@@ -292,11 +313,12 @@ class AccessListEntry:
             logger.info("Failed to convert flow: {}. Errors: {}".format(flowspec_rule.flow, errors))
             return []
 
-        features_iter = product(protocol_list, source_port_list, destination_port_list)
-        for proto, s_port, d_port in features_iter:
+        features_iter = product(protocol_list, source_port_list, destination_port_list, packet_length_list)
+        for proto, s_port, d_port, packet_length in features_iter:
             init_args['protocol'] = proto
             init_args['source_port'] = s_port
             init_args['destination_port'] = d_port
+            init_args['packet_length'] = packet_length
             try:
                 result_acl_rules.append(cls(**init_args))
             except ACLValidationError as err:
@@ -403,32 +425,38 @@ class AccessListEntry:
 
         return proto
 
-    @staticmethod
-    def _validate_fragment_type(fragment_type, raise_exception=True):
-        if not fragment_type:
+    def _validate_fragments(self, fragments):
+        if not fragments:
             return None
 
-        if fragment_type != 'is-fragment':
-            if raise_exception:
-                raise ValueError('Passed wrong fragment_type value: {}'.format(fragment_type))
-            else:
-                return None
+        if self._icmp_type or self._icmp_code:
+            raise ACLValidationError("fragments keyword can't be used with icmp type/code")
 
-        return fragment_type
+        return 'fragments'
 
     @classmethod
-    def _parse_fs_fragment_type(cls, frag, default=None):
-        if not frag:
-            return default
+    def _parse_fs_fragment_type(cls, frag):
 
-        fragment_type_list = frag.split(':')
+        if frag:
+            if 'IsF' in frag or 'FF' in frag or 'LF' in frag:
+                return True
+            else:
+                raise ACLValidationError("Unsupported fragment type value: {}".format(frag))
 
-        for fragment_type in fragment_type_list:
-            if 'IsF' in fragment_type:
-                return 'is-fragment'
+        return False
 
-        return default
+    @classmethod
+    def _parse_packet_length(cls, value, default):
+        can_set_packet_length = getattr(settings, settings.PACKET_LENGTH_PERMISSION_NAME, None)
+        if can_set_packet_length is None:
+            raise ACLValidationError("{} flag wasn't set. Please, restart the program and"
+                                     "check syslog for any xrcmd errors. Dropping rules with packet length."
+                                     .format(settings.PACKET_LENGTH_PERMISSION_NAME))
+        elif not can_set_packet_length:
+            raise ACLValidationError("hw_module wasn't configured. Dropping rules with packet length.")
 
+        else:
+            return cls._parse_conditional_fs_type(value, default)
 
 
 class AccessList:

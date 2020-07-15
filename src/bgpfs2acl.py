@@ -10,14 +10,18 @@ import logging.config
 import threading
 from logging.handlers import SysLogHandler
 
+from conf import settings
 from conf.settings import log_config, app_config
 from flowspec import FlowSpec
 from func_lib import get_interfaces_md5
 from src.access_list import AccessList, AccessListEntry
-from xr_cmd_client import XRCmdClient
+from xr_cmd_client import XRCmdClient, XRCmdExecError
 
 logging.config.dictConfig(log_config)
 logger = logging.getLogger(__name__)
+
+HW_PROFILE_TCAM_CONF = ("hw-module profile tcam format access-list ipv4 src-addr dst-addr src-port dst-port proto "
+                           "packet-length frag-bit port-range")
 
 
 class BgpFs2AclTool:
@@ -216,16 +220,30 @@ def setup_syslog():
         root_logger.addHandler(handler)
 
 
+def check_hw_module_config(xr_cmd_client):
+    hw_module_cmd = "sh run {}".format(HW_PROFILE_TCAM_CONF)
+    res = xr_cmd_client.xrcmd(hw_module_cmd)
+    if res[0].startswith("No such configuration item(s)"):
+        setattr(settings, settings.PACKET_LENGTH_PERMISSION_NAME, False)
+    elif res[0].startswith(HW_PROFILE_TCAM_CONF):
+        setattr(settings, settings.PACKET_LENGTH_PERMISSION_NAME, True)
+
+
 def main():
     setup_syslog()
     logger.info("###### Starting BGPFS2ACL RUN on XR based device ######")
     xr_cmd_client = XRCmdClient(app_config.user, app_config.password, app_config.router_host, app_config.router_port)
     bgpfs2acl_tool = BgpFs2AclTool(xr_client=xr_cmd_client)
-    if app_config.revert:
-        clean_acls(bgpfs2acl_tool)
-        sys.exit()
 
-    run(bgpfs2acl_tool)
+    try:
+        if app_config.revert:
+            clean_acls(bgpfs2acl_tool)
+            sys.exit()
+
+        check_hw_module_config(xr_cmd_client)
+        run(bgpfs2acl_tool)
+    except XRCmdExecError as err:
+        logger.error(str(err))
 
 
 if __name__ == "__main__":

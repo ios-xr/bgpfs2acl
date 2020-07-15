@@ -13,6 +13,8 @@ class FlowSpecRule:
         source_port = 'SPort'
         icmp_type = 'ICMPType'
         icmp_code = 'ICMPCode'
+        fragment_type = 'Frag'
+        packet_length = 'Length'
 
     class Actions(Enum):
         deny = 'Traffic-rate: 0 bps'
@@ -37,15 +39,6 @@ class FlowSpecRule:
 
         raw_flow = raw_flow.split(':', 1)[1]
         raw_actions = raw_actions.split(':', 1)[1]
-
-        # feature_names = [f.value for f in FlowSpecRule.FeatureNames.__members__.values()]
-        # for feature in raw_flow:
-        #     split_feature = feature.split(':', 1)
-        #     if split_feature[0] not in feature_names:
-        #         return None, None
-
-        # if not any((raw_actions.startswith(action.value) for action in FlowSpecRule.Actions.__members__.values())):
-        #     return None, None
 
         return raw_flow, raw_actions
 
