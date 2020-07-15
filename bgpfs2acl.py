@@ -118,15 +118,14 @@ def run(bgpfs2acl_tool):
 
     if flowspec is None:
         logger.warning('Flowspec is empty/was not found.')
-        if bgpfs2acl_tool.cached_fs_md5:
-            logger.warning('Removing fs rules from access-lists...')
-            for acl in access_lists:
+        for acl in access_lists:
+            if acl.is_flowspec_applied():
+                logger.warning('Removing fs rules from {} access-list...'.format(acl.name))
                 acl.remove_flowspec()
                 remove_fs_conf = acl.get_changes_config()
                 if remove_fs_conf:
-                    to_apply = ''.join([to_apply, remove_fs_conf])
-
-            bgpfs2acl_tool.cached_fs_md5 = None
+                    to_apply = '\n'.join([to_apply, remove_fs_conf])
+        bgpfs2acl_tool.cached_fs_md5 = None
 
     else:
         filtered_interfaces_md5 = get_interfaces_md5(filtered_interfaces)
