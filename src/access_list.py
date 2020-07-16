@@ -84,6 +84,8 @@ class ACLValidationError(StandardError):
 
 
 class AccessListEntry:
+    MAX_PACKET_LENGTH = 16383
+
     class Command(Enum):
         deny = 'deny'
         permit = 'permit'
@@ -203,24 +205,32 @@ class AccessListEntry:
 
     @staticmethod
     def validate_rangeable_features(value):
-        if value is None:
-            return value
+        if not value:
+            return None
 
         if value.startswith('range ') or value.startswith('eq '):
             to_check = value.split(' ')[1:]
-            to_check = list(to_check)  # to be sure that this is list
 
             for num in to_check:
                 if not num.isdigit() or not 0 < int(num) < 65536:
-                    raise ACLValidationError('Passed invalid feature value: {}'.format(value))
+                    raise ACLValidationError('Passed invalid numerous value: {}'.format(value))
 
         return value
 
     def _validate_packet_length(self, packet_length):
         packet_length = self.validate_rangeable_features(packet_length)
 
-        if packet_length:
-            packet_length = 'packet-length {}'.format(packet_length)
+        if not packet_length:
+            return None
+
+        packet_length_values = packet_length.split(' ')[1:]
+
+        for value in packet_length_values:
+            if int(value) > self.MAX_PACKET_LENGTH:
+                raise ACLValidationError("Invalid packet-length: {}. Passed value {} is bigger than maximum permitted"
+                                         " {}".format(packet_length, value, self.MAX_PACKET_LENGTH))
+
+        packet_length = 'packet-length {}'.format(packet_length)
 
         return packet_length
 
@@ -322,7 +332,7 @@ class AccessListEntry:
             try:
                 result_acl_rules.append(cls(**init_args))
             except ACLValidationError as err:
-                logger.info("Failed to create ACL entry: {}".format(str(err)))
+                logger.info("Failed to create ACL entry from FS rule: {}. {}".format(flowspec_rule.flow, str(err)))
         return result_acl_rules
 
     @staticmethod
@@ -449,7 +459,7 @@ class AccessListEntry:
     def _parse_packet_length(cls, value, default):
         can_set_packet_length = getattr(settings, settings.PACKET_LENGTH_PERMISSION_NAME, None)
         if can_set_packet_length is None:
-            raise ACLValidationError("{} flag wasn't set. Please, restart the program and"
+            raise ACLValidationError("{} flag wasn't set. Please, restart the program and "
                                      "check syslog for any xrcmd errors. Dropping rules with packet length."
                                      .format(settings.PACKET_LENGTH_PERMISSION_NAME))
         elif not can_set_packet_length:
