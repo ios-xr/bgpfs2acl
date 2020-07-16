@@ -499,10 +499,10 @@ class AccessList:
             self._changes.append('no {}'.format(seq))
 
     def apply_flowspec(self, fs_ace_list, fs_start_seq=None):
+        self.remove_flowspec()
+
         if not fs_ace_list:
             return
-
-        self.remove_flowspec()
 
         to_apply = [AccessListEntry.create_remark(FLOWSPEC_START_REMARK).rule]
         to_apply.extend(fs_ace_list)
@@ -599,6 +599,8 @@ class AccessList:
         for seq in list(fs_iter):
             self._remove_statement(seq)
 
+        # TODO: change this logic: need to find and move only 'permit any any' statement,
+        #  which is located after flowspec, if there is no such ace, then skip
         last_seq, last_statement = self._statements.peekitem()
         if last_seq > self._fs_start:
             self._remove_statement(last_seq)

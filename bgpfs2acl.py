@@ -21,7 +21,7 @@ logging.config.dictConfig(log_config)
 logger = logging.getLogger(__name__)
 
 HW_PROFILE_TCAM_CONF = ("hw-module profile tcam format access-list ipv4 src-addr dst-addr src-port dst-port proto "
-                           "packet-length frag-bit port-range")
+                        "packet-length frag-bit port-range")
 
 
 class BgpFs2AclTool:
@@ -164,12 +164,12 @@ def run(bgpfs2acl_tool):
 
             bgpfs2acl_tool.cached_fs_md5 = flowspec.md5
 
-            updated_interfaces = bgpfs2acl_tool.get_interfaces(filter_regx='^interface (Gig|Ten|Twe|Fo|Hu).*')
-            updated_interfaces_md5 = get_interfaces_md5(updated_interfaces)
-            bgpfs2acl_tool.cached_filtered_interfaces_md5 = updated_interfaces_md5
-
     if to_apply:
         bgpfs2acl_tool.apply_conf(to_apply)
+
+        updated_interfaces = bgpfs2acl_tool.get_interfaces(filter_regx='^interface (Gig|Ten|Twe|Fo|Hu).*')
+        updated_interfaces_md5 = get_interfaces_md5(updated_interfaces)
+        bgpfs2acl_tool.cached_filtered_interfaces_md5 = updated_interfaces_md5
 
 
 def clean_acls(bgpfs2acl_tool):
