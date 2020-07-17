@@ -61,7 +61,9 @@ ICMP_TYPE_CODENAMES = {
 
 ALLOWED_PROTOCOLS = {'icmp', '1', 'tcp', '6', 'udp', '17', 'ipv4'}
 
-ICMP_PROTOCOL_VALUES = {'icmp', '1'}
+ALLOWED_ICMP_PROTO_VALUES = {'icmp', '1', 'ipv4'}
+
+ICMP_PROTOCOL_VALUE = 'icmp'
 
 IPV4_PROTOCOL_VALUE = 'ipv4'
 
@@ -112,24 +114,13 @@ class AccessListEntry:
         self._destination_ip = self.validate_ip(destination_ip)
         self._destination_port = self.validate_rangeable_features(destination_port)
 
-        if (self._protocol in ICMP_PROTOCOL_VALUES or self._protocol == IPV4_PROTOCOL_VALUE) \
+        if (self._protocol in ALLOWED_ICMP_PROTO_VALUES or self._protocol == IPV4_PROTOCOL_VALUE) \
                 and (self._source_port or self._destination_port):
             raise ACLValidationError(
                 "Protocol {} can't be used with source or destination port.".format(self._protocol)
             )
 
-        self._icmp_type = None
-        if self._protocol in ICMP_PROTOCOL_VALUES and icmp_type is not None:
-            if ((isinstance(icmp_type, int) or icmp_type.isdigit()) and not 0 <= int(icmp_type) <= 255) \
-                    and icmp_type not in ICMP_TYPE_CODENAMES:
-                raise ACLValidationError('Wrong icmp_type value: {}'.format(icmp_type))
-            self._icmp_type = icmp_type
-
-        self._icmp_code = None
-        if self._icmp_type and icmp_code:
-            if (isinstance(icmp_code, int) or icmp_code.isdigit()) and not 0 <= int(icmp_code) <= 255:
-                raise ACLValidationError('Wrong icmp_code value: {}'.format(icmp_code))
-            self._icmp_code = icmp_code
+        self._icmp_type, self._icmp_code = self._validate_icmp_values(icmp_type, icmp_code)
 
         self._packet_length = self._validate_packet_length(packet_length)
 
@@ -265,6 +256,27 @@ class AccessListEntry:
             if proto:
                 validated.append(proto)
         return validated
+
+    def _validate_icmp_values(self, icmp_type, icmp_code):
+        if not icmp_type:
+            if icmp_code:
+                raise ACLValidationError("ICMPcode can't be applied to ACE without ICMPtype")
+            return None, None
+
+        if not ((isinstance(icmp_type, int) or icmp_type.isdigit()) and 0 <= int(icmp_type) <= 255) \
+                and icmp_type not in ICMP_TYPE_CODENAMES:
+            raise ACLValidationError('Wrong icmp_type value: {}'.format(icmp_type))
+
+        if self._protocol == IPV4_PROTOCOL_VALUE:
+            self._protocol = ICMP_PROTOCOL_VALUE
+        elif self._protocol not in ALLOWED_ICMP_PROTO_VALUES:
+            raise ACLValidationError("icmp_type can't be used with {} protocol (allowed protocol values: {})"
+                                     .format(self._protocol, ', '.join(ALLOWED_ICMP_PROTO_VALUES)))
+
+        if icmp_code and not ((isinstance(icmp_code, int) or icmp_code.isdigit()) and 0 <= int(icmp_code) <= 255):
+            raise ACLValidationError('Wrong icmp_code value: {}'.format(icmp_code))
+
+        return icmp_type, icmp_code
 
     @classmethod
     def from_flowspec_rule(cls, flowspec_rule):
