@@ -1,3 +1,4 @@
+from __future__ import unicode_literals
 import re
 from pprint import pformat
 
@@ -36,7 +37,7 @@ class XRCmdClient:
         self.stdout = channel.makefile('r')
 
         # this output was made for cleaning stdout out of info about established ssh connection
-        ready_msg = 'connected succesfully'
+        ready_msg = 'connected successfully'
         self.stdin.write('echo {}\n'.format(ready_msg))
         for line in self.stdout:
             if line.startswith(ready_msg):
@@ -47,11 +48,11 @@ class XRCmdClient:
 
     @staticmethod
     def _print_exec_out(cmd, out_buf):
-        logger.info('XR command executed: {}'.format(cmd))
+        logger.debug('XR command executed: {}'.format(cmd))
         if out_buf:
-            logger.info('OUTPUT:')
-            logger.info(pformat(out_buf))
-            logger.info('end of OUTPUT')
+            logger.debug('OUTPUT:')
+            logger.debug(pformat(out_buf))
+            logger.debug('end of OUTPUT')
 
     def _exec_xr_func(self, xr_func, xr_arg):
         """
