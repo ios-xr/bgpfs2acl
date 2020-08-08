@@ -79,7 +79,9 @@ bgpfs2acl           latest              c9cc7b5ccff7        4 months ago        
 
 ### 2. Prepare linux environment
 
-To make possible our tool and IOS XR interconnection, we need to make some steps: #### On the router: - in the same repository root directory:
+To make possible our tool and IOS XR interconnection, we need to make some steps: 
+
+#### On the router: - in the same repository root directory:
 
 ```
   source prepare_host_environment.sh
