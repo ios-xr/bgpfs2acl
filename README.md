@@ -171,6 +171,14 @@ After all the parameters changes we are ready to start the programm
 
     Voila! Bgpfs2acl tool is up! Make some flowspec rules and check changes in access lists and interfaces.
     After that you can use usual **docker stop** and **docker run** to stop and run the container.
+    
+    You can always check that you container is running: 
+    
+    ```
+    [ncs5501:~]$ docker ps
+    CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS               NAMES
+    59a9927a1733        bgpfs2acl           "/bin/sh -c 'source s"   3 weeks ago         Up 3 weeks                              bgpfs2acl
+    ```
 
 
 
