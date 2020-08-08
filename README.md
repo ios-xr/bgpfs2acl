@@ -8,64 +8,172 @@ It will act as a “BGP FS Lite” implementation for systems not supporting BGP
 based Fretta systems).
 
 
-## Script start:
+## Script Installation Process:
 
-The bare minimum to start the application, just execute the script with default parameters from XR Linux Shell. Git clone
-is sufficient, no extra packages required. 
+### Build image and save it to a devbox
+
+This is one time operation to retrieve latest version of code. 
+
+- Clone the repository to any machine (hereafter **devbox**) with **docker** & **git**:
+
+    ```
+    git clone https://github.com/ios-xr/bgpfs2acl.git
+    ```
+
+- Go to the directory:
+
+    ```
+    cd bgpfs2acl
+    ```
+
+- Build the image:
+
+    ```
+    docker build -t bgpfs2acl -f docker/Dockerfile-dev .
+    ```
+
+  **bgpfs2acl** is the name of built image
+
+- save image to an archive for further delivery to a router:
+
+    ```
+     docker save bgpfs2acl > bgpfs2acl.tar
+    ```
+
+    Now our image ready! Next step to transfer it to the router(s) via scp/tftp/ftp based on your preferred/available technique. We will cover steps for SCP. 
+
+### 1. Transfer and install the image to a router
+
+- go to a linux shell on a router (need to be configured):
+
+    ```
+    ssh -p 57722 <username>@<router ip>
+    ```
+
+### On the router:
+
+- transfer the repository and the image archive from **devbox** to the router:
+
+    ```bash
+    scp <username>@<devbox-ip>:<path-to-bgpfs2acl-repository> /misc/app_host/
+    ```
+
+- go to the repository
+
+    ```bash
+    cd /misc/app_host/bgpfs2acl
+    ```
+
+- load image from the archive to the docker environment:
+
+```bash
+      docker load < bgpfs2acl.tar
+```
+
+- check, that everything is ok and image was loaded successfully:
+
+```bash
+[ncs5501:~]$ docker images | grep bgpfs2acl
+bgpfs2acl           latest              c9cc7b5ccff7        4 months ago        131.3 MB
+```
+
+### 2. Prepare linux environment
+
+To make possible our tool and IOS XR interconnection, we need to make some steps: #### On the router: - in the same repository root directory:
 
 ```
-RP/0/RP0/CPU0:Macrocarpa# bash
-
-[Macrocarpa:~]$ git clone https://github.com/Maikor/bgpfs2acl.git
-Cloning into 'bgpfs2acl'...
-remote: Enumerating objects: 30, done.
-remote: Counting objects: 100% (30/30), done.
-remote: Compressing objects: 100% (22/22), done.
-remote: Total 40 (delta 15), reused 22 (delta 8), pack-reused 10
-Unpacking objects: 100% (40/40), done.
-
-[Macrocarpa:~]$ cd bgpfs2acl
-Sat Feb 15 03:29:39.538 UTC
-[Macrocarpa:~]$ python bgpfs2acl.py
-
+  source prepare_host_environment.sh
 ```
 
-For more parameters, check the help:
+- You should see something like:
 
-```
-[Macrocarpa:~]$ python bgpfs2acl.py -h 
+    ```
+    Checking if user already exist...
+    Creating new user...
+    Enter new UNIX password: 
+    Retype new UNIX password: 
+    passwd: password updated successfully
+    New user created. Username: bgpfs2acl
+    Keypair was created and stored in /home/bgpfs2acl
+    Public key was added to ~/.ssh/authorized_keys.
+    The key was copied to the shared location.
+    ```
 
-BGP FlowSpec to ACL converter
+After that your router is ready to run the container
 
-optional arguments:
-  -h, --help            show this help message and exit
-  -v, --verbose         increase output verbosity
-  -f FREQUENCY, --frequency FREQUENCY
-                        set script execution frequency, default value 30 sec
-  --line_start LINE_START
-                        Define the first line to add generated ACEs
-  --revert REVERT       Start script in clean up mode
-  --default-acl-name DEFAULT_ACL_NAME
-                        Define default ACL name
-```
+### 3. Set the parameters
 
-To revert the script execution, please start the script with revert command. 
+### On the router:
+
+Before the running, we need to set the parameters like execution frequency, default acl name, syslog parameters  and etc. Inside the repository root you can find a file called **parameters.env.example**. Here you can find all the configurable parameters of our programm. To configure the parameters, you need to follow these steps:
+
+1. Copy the file **parameters.env.example** to **parameters.env** (or you can choose any other name but in that case, you will need to change the running script)
+
+    ```bash
+    cp parameters.env.example parameters.env
+    ```
+
+2. Open that file in any text editor. There you can find all the parameters an commentaries for them. Each parameter has been set to default value. You can change any value on your own if you need it. Here is the short description of all the parameters:
+
+    ```bash
+    #rules checking and updating interval in seconds
+    FS2ACL_UPD_FREQUENCY=30
+
+    #set this parameter to True if you need to remove all the rules applied by the script
+    FS2ACL_REVERT=False 
+
+    #default name of the ACL, which will be used for target interfaces without bounded ACL
+    FS2ACL_DEFAULT_ACL_NAME=bgpfs2acl-ipv4 #
+
+    #the sequence, starting from which all the generated rules will be applied to the targeted ACLs
+    FS2ACL_FS_START_SEQ=100500
+
+    #syslog ip address
+    FS2ACL_SYSLOG_HOST=127.0.0.1
+
+    #syslog port
+    FS2ACL_SYSLOG_PORT=514
+
+    #syslog file
+    FS2ACL_SYSLOG_FILE=None
+
+    #syslog level info
+    FS2ACL_SYSLOG_LOGLEVEL=INFO
+
+    #router host
+    FS2ACL_ROUTER_HOST=127.0.0.1
+
+    #router port
+    FS2ACL_ROUTER_PORT=57722
+
+    #linux user for connection to the router
+    FS2ACL_ROUTER_USER=bgpfs2acl
+
+    #user's password, not needed if using ssh key
+    FS2ACL_ROUTER_PASSWORD=
+    ```
+
+3. In case if you changed the parameters filename you need to change it in the scripts/run_container.sh file. 
+
+After all the parameters changes we are ready to start the programm
+
+### 3. Run the container
+
+### On the router:
+
+- To run container execute the script from the repository:
+
+    ```
+    source run_container.sh
+    ```
+
+    Voila! Bgpfs2acl tool is up! Make some flowspec rules and check changes in access lists and interfaces.
+    After that you can use usual **docker stop** and **docker run** to stop and run the container.
 
 
-```
-[Macrocarpa:~]$ python bgpfs2acl.py --revert
 
-Building configuration...
-Terminating script
-[Macrocarpa:~]$
-```
-
-For default FlowSpec configurations sample please check the folder dev_configs. 
+For default FlowSpec configurations samples please check the folder dev_configs. 
 Macrocarpa acts as a FlowSpec client and Red_Pine announcing the FlowSpec rules.
-
-
-Right now appliance for dynamic ACL (already existed on the devices) would live for a while in develop branch,
- would be merged after series of tests. Stay tuned for update. 
 
 ## Script relies on iosxr-ztp-python
 
