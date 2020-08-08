@@ -180,7 +180,21 @@ After all the parameters changes we are ready to start the programm
     59a9927a1733        bgpfs2acl           "/bin/sh -c 'source s"   3 weeks ago         Up 3 weeks                              bgpfs2acl
     ```
 
+To check the application logs: 
 
+```
+[ncs5501:~]$ docker logs bgpfs2acl
+
+2020-07-17 18:14:53,235 - INFO - Failed to create ACL entry from FS rule: Dest:7.7.7.7/32,Proto:=17,SPort:=123,Length:>=1&<=35|>=37&<=45|>=47&<=75|>=77&<=219|>=221&<=65535. Invalid packet-length: range 221 65535. Passed value 65535 is bigger than maximum permitted 16383
+2020-07-19 14:38:56,548 - WARNING - Flowspec is empty/was not found.
+2020-07-19 14:38:56,549 - WARNING - Removing fs rules from test2 access-list...
+2020-07-19 14:38:56,549 - WARNING - Removing fs rules from test3 access-list...
+2020-07-19 14:38:56,549 - WARNING - Removing fs rules from bgpfs2acl-ipv4 access-list...
+2020-07-20 09:08:27,906 - WARNING - Flowspec is empty/was not found.
+2020-07-20 09:08:27,906 - WARNING - Removing fs rules from test2 access-list...
+2020-07-20 09:08:27,906 - WARNING - Removing fs rules from test3 access-list...
+2020-07-20 09:08:27,906 - WARNING - Removing fs rules from bgpfs2acl-ipv4 access-list...
+```
 
 For default FlowSpec configurations samples please check the folder dev_configs. 
 Macrocarpa acts as a FlowSpec client and Red_Pine announcing the FlowSpec rules.
