@@ -14,7 +14,7 @@ ipaddress==1.0.23
 mock==3.0.5
 more-itertools==5.0.0
 packaging==20.3
-paramiko==2.7.1
+paramiko==2.10.1
 pathlib2==2.3.5
 pluggy==0.13.1
 py==1.8.1
