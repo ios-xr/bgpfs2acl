@@ -3,7 +3,7 @@ from __future__ import unicode_literals
 import os
 
 # User can change path to log on his own
-import configargparse
+import argparse
 from pathlib2 import Path
 
 PACKET_LENGTH_PERMISSION_NAME = "CAN_SET_PACKET_LENGTH"
@@ -48,10 +48,8 @@ __default_syslog_level = 'WARNING'
 
 __default_config_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'parameters.ini')
 
-parser = configargparse.get_arg_parser(auto_env_var_prefix='fs2acl_',
-                                       description='BGP FlowSpec to ACL converter',
-                                       default_config_files=[__default_config_file])
-parser.add_argument('-c', '--my-config', is_config_file=True, help='config file path')
+parser = argparse.ArgumentParser(description='BGP FlowSpec to ACL converter')
+# parser.add_argument('-c', '--my-config', is_config_file=True, help='config file path')
 parser.add_argument("--upd-frequency", dest='upd_frequency', default=30, type=int,
                     help="sets checking flowspec updates frequency, default value 30 sec")
 parser.add_argument("--fs-start-seq", help="Define the first sequence to add ACEs generated from Flowspec "
@@ -73,6 +71,8 @@ parser.add_argument("--syslog-loglevel", type=str, default=__default_syslog_leve
 # Todo add fix line numbers;
 # Todo add verbose story;
 
-app_config = parser.parse_args()
-
+app_config = {}
+def set_app_config():
+    app_config = parser.parse_args()
+    return app_config
 

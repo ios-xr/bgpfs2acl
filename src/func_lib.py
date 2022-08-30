@@ -23,8 +23,8 @@ def is_ipv4_subnet(ip_address):
 
 def get_interfaces_md5(interfaces):
     interfaces_conf = ''
-    for interface, features in interfaces.iteritems():
+    for interface, features in interfaces.items():
         features_concat = '\n'.join(features)
         interface_conf = '\n'.join([interface, features_concat])
         interfaces_conf = '\n'.join([interfaces_conf, interface_conf])
-    return hashlib.md5(interfaces_conf).hexdigest()
+    return hashlib.md5(interfaces_conf.encode('utf-8')).hexdigest()

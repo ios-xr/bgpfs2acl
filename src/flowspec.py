@@ -19,6 +19,7 @@ class FlowSpecRule:
     class Actions(Enum):
         deny = 'Traffic-rate: 0 bps'
         nexthop = 'Nexthop: '
+        redirect_vrf = 'Redirect: VRF'
 
     def __init__(self):
         self._raw_flow = None
@@ -57,7 +58,7 @@ class FlowSpecRule:
         return self._flow_features.get(feature_name, None)
 
     def features_iter(self):
-        return self._flow_features.iteritems()
+        return self._flow_features.items()
 
     @classmethod
     def from_config(cls, raw_flow, raw_actions):
@@ -109,7 +110,7 @@ class FlowSpec:
 
     @property
     def md5(self):
-        return hashlib.md5(self.config).hexdigest()
+        return hashlib.md5(self.config.encode('utf-8')).hexdigest()
 
     @property
     def rules(self):
@@ -117,6 +118,7 @@ class FlowSpec:
 
     @classmethod
     def from_config(cls, fs_config):
+        fs_config = fs_config.strip().split('\n')[3:]
         fs_config = cls._validate_config(fs_config, raise_exception=False)
         if fs_config is None:
             return None

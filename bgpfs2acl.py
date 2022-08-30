@@ -244,8 +244,7 @@ def main():
         global app_config
         app_config = set_app_config()
         setup_syslog()
-        grpc_timeout = 10
-        client = CiscoGRPCClient(app_config.router_host, app_config.router_port, grpc_timeout, app_config.user, app_config.password)
+        client = CiscoGRPCClient(app_config.router_host, app_config.router_port, 10, app_config.user, app_config.password)
         check_hw_module_config(client)
         bgpfs2acl_tool = BgpFs2AclTool(client)
     
