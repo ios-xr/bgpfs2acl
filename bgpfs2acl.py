@@ -6,28 +6,34 @@ import re
 
 import sys
 
+from virtualenv import cli_run
+
+from iosxr_grpc.cisco_grpc_client import CiscoGRPCClient
+
 import logging.config
 import threading
 from logging.handlers import SysLogHandler
 
 from conf import settings
-from conf.settings import log_config, app_config
+from conf.settings import log_config, app_config, set_app_config
 from src.flowspec import FlowSpec
 from src.func_lib import get_interfaces_md5
 from src.access_list import AccessList, AccessListEntry
-from src.xr_cmd_client import XRCmdClient, XRCmdExecError
+from src.utils import convert_flowspec_to_acl_rules
 
-logging.config.dictConfig(log_config)
+# logging.config.dictConfig(log_config)
 logger = logging.getLogger(__name__)
 
 HW_PROFILE_TCAM_CONF = ("hw-module profile tcam format access-list ipv4 src-addr dst-addr src-port dst-port proto "
                         "packet-length frag-bit port-range")
 
+DEFAULT_ACL_NAME = 'bgpfs2acl-ipv4'
+FS_START_SEQUENCE = 100500
+INT_REGEX = '(?=(^interface (Gig|Ten|Twe|Fo|Hu).*))(?!.*l2transport)'
 
 class BgpFs2AclTool:
-    def __init__(self, xr_client):
-        self.xr_client = xr_client
-
+    def __init__(self, grpc_client):
+        self.grpc_client = grpc_client
         self.cached_filtered_interfaces_md5 = None
         self.cached_fs_md5 = None
 
@@ -39,8 +45,11 @@ class BgpFs2AclTool:
         :param filter_regx:
         :return:
         """
-        interfaces = self.xr_client.xrcmd("sh running interface")
+        err, interfaces = self.grpc_client.showcmdtextoutput("sh running interface")
+        if err:
+            raise err.errors
         interfaces_dict = {}
+        interfaces = interfaces.split('\n')
         for i, line in enumerate(interfaces):
             exclude = False
             if line.startswith('interface '):
@@ -65,7 +74,7 @@ class BgpFs2AclTool:
         filtered_interfaces = {}
         pat = re.compile(r'{}'.format(regx))
 
-        for interface_name, feature_list in interfaces.iteritems():
+        for interface_name, feature_list in interfaces.items():
             if pat.match(interface_name):
                 filtered_interfaces.update({interface_name: feature_list})
         return filtered_interfaces
@@ -73,7 +82,7 @@ class BgpFs2AclTool:
     def get_interfaces_by_acl_name(self, acl_name):
         result_dict = {}
         interfaces_dict = self.get_interfaces()
-        for interface_name, feature_list in interfaces_dict.iteritems():
+        for interface_name, feature_list in interfaces_dict.items():
             for setting in feature_list:
                 if setting.startswith('ipv4 access-group ' + acl_name + ' ingress'):
                     result_dict.update({interface_name: feature_list})
@@ -81,7 +90,9 @@ class BgpFs2AclTool:
         return result_dict
 
     def get_flowspec(self):
-        flowspec_ipv4 = self.xr_client.xrcmd('sh flowspec ipv4')
+        err, flowspec_ipv4 = self.grpc_client.showcmdtextoutput('sh flowspec ipv4')
+        if err:
+            raise Exception(err)
 
         if len(flowspec_ipv4) <= 1:
             return None
@@ -89,7 +100,9 @@ class BgpFs2AclTool:
         return FlowSpec.from_config(flowspec_ipv4)
 
     def get_access_lists(self):
-        acls_raw = self.xr_client.xrcmd('sh run ipv4 access-list')
+        err, acls_raw = self.grpc_client.showcmdtextoutput('sh run ipv4 access-list')
+        if err:
+            raise Exception(err)
         if len(acls_raw) <= 1:
             return None
 
@@ -98,24 +111,17 @@ class BgpFs2AclTool:
 
     def apply_conf(self, conf):
         if conf:
-            return self.xr_client.xrapply_string(conf)
-
-
-def convert_flowspec_to_acl_rules(flowspec):
-    converted_rules = []
-    for fs_rule in flowspec.rules:
-        access_list_entries = [ace.rule for ace in AccessListEntry.from_flowspec_rule(fs_rule)]
-        converted_rules.extend(access_list_entries)
-    return converted_rules
-
-
+            response = self.grpc_client.cliconfig(conf)
+            if response.errors:
+                 raise Exception(response.errors)          
+    
 def run(bgpfs2acl_tool):
     threading.Timer(app_config.upd_frequency, run, [bgpfs2acl_tool]).start()
+    logger.debug("start run")
     to_apply = ''
     flowspec = bgpfs2acl_tool.get_flowspec()
     access_lists = bgpfs2acl_tool.get_access_lists()
-    filtered_interfaces = bgpfs2acl_tool.get_interfaces(filter_regx='^interface (Gig|Ten|Twe|Fo|Hu).*')
-
+    filtered_interfaces = bgpfs2acl_tool.get_interfaces(filter_regx=INT_REGEX)
     if flowspec is None:
         logger.warning('Flowspec is empty/was not found.')
         for acl in access_lists:
@@ -129,12 +135,14 @@ def run(bgpfs2acl_tool):
 
     else:
         filtered_interfaces_md5 = get_interfaces_md5(filtered_interfaces)
+        logger.debug("Flowspec config: \n" + flowspec.config)
+        logger.debug("HASH: " + flowspec.md5)
         if flowspec.md5 != bgpfs2acl_tool.cached_fs_md5 \
                 or filtered_interfaces_md5 != bgpfs2acl_tool.cached_filtered_interfaces_md5:
             bound_acls = set()
             pat = re.compile(r'ipv4 access-group (.*) ingress')
             to_apply_default_acl = []
-            for interface, feature_list in filtered_interfaces.iteritems():
+            for interface, feature_list in filtered_interfaces.items():
                 f_match = False
                 for feature in feature_list:
                     f_match = pat.match(feature)
@@ -167,13 +175,13 @@ def run(bgpfs2acl_tool):
     if to_apply:
         bgpfs2acl_tool.apply_conf(to_apply)
 
-        updated_interfaces = bgpfs2acl_tool.get_interfaces(filter_regx='^interface (Gig|Ten|Twe|Fo|Hu).*')
+        updated_interfaces = bgpfs2acl_tool.get_interfaces(filter_regx=INT_REGEX)
         updated_interfaces_md5 = get_interfaces_md5(updated_interfaces)
         bgpfs2acl_tool.cached_filtered_interfaces_md5 = updated_interfaces_md5
 
 
 def clean_acls(bgpfs2acl_tool):
-    logger.info('###### Reverting applied converted flowspec rules... ######')
+    logger.debug('###### Reverting applied converted flowspec rules... ######')
     access_lists = bgpfs2acl_tool.get_access_lists()
     to_apply = ''
     for acl in access_lists:
@@ -183,11 +191,12 @@ def clean_acls(bgpfs2acl_tool):
             to_apply = '\n'.join([to_apply, apply_config])
     if to_apply:
         bgpfs2acl_tool.apply_conf(to_apply)
-    logger.info("###### Script execution was complete ######")
+    logger.debug("###### Script execution was complete ######")
 
 
 def setup_syslog():
     root_logger = logging.getLogger()
+    root_logger.setLevel(app_config.syslog_loglevel)
     formatter = logging.Formatter(
         ('bgpfs2acl: { "loggerName":"%(name)s", "asciTime":"%(asctime)s", "pathName":"%(pathname)s",'
          '"logRecordCreationTime":"%(created)f", "functionName":"%(funcName)s", "levelNo":"%(levelno)s",'
@@ -215,35 +224,42 @@ def setup_syslog():
             os.makedirs(os.path.dirname(log_path))
         handler = logging.handlers.TimedRotatingFileHandler(log_path, when='D', interval=1, backupCount=7)
         handler.setFormatter(formatter)
-        handler.setLevel(logging.INFO)
+        handler.setLevel(app_config.syslog_loglevel)
         root_logger.addHandler(handler)
 
-
-def check_hw_module_config(xr_cmd_client):
-    hw_module_cmd = "sh run {}".format(HW_PROFILE_TCAM_CONF)
-    res = xr_cmd_client.xrcmd(hw_module_cmd)
-    if res[0].startswith("No such configuration item(s)"):
+def check_hw_module_config(grpc_client):
+    hw_module_cmd = "sh run | in hw-module"
+    err, res = grpc_client.showcmdtextoutput(hw_module_cmd)
+    if err:
+        raise Exception(err)
+    hw_profile_tcam = res.strip().split('\n')[-1]
+    if hw_profile_tcam != HW_PROFILE_TCAM_CONF:
         setattr(settings, settings.PACKET_LENGTH_PERMISSION_NAME, False)
-    elif res[0].startswith(HW_PROFILE_TCAM_CONF):
+    elif hw_profile_tcam == HW_PROFILE_TCAM_CONF:
         setattr(settings, settings.PACKET_LENGTH_PERMISSION_NAME, True)
 
 
 def main():
-    setup_syslog()
-    logger.info("###### Starting BGPFS2ACL RUN on XR based device ######")
-    xr_cmd_client = XRCmdClient(app_config.user, app_config.password, app_config.router_host, app_config.router_port)
-    bgpfs2acl_tool = BgpFs2AclTool(xr_client=xr_cmd_client)
-
     try:
+        global app_config
+        app_config = set_app_config()
+        setup_syslog()
+        grpc_timeout = 10
+        client = CiscoGRPCClient(app_config.router_host, app_config.router_port, grpc_timeout, app_config.user, app_config.password)
+        check_hw_module_config(client)
+        bgpfs2acl_tool = BgpFs2AclTool(client)
+    
         if app_config.revert:
             clean_acls(bgpfs2acl_tool)
             sys.exit()
-
-        check_hw_module_config(xr_cmd_client)
+        
+        logger.debug("###### Starting BGPFS2ACL RUN on XR based device ######")
         run(bgpfs2acl_tool)
-    except XRCmdExecError as err:
+    except Exception as err:
         logger.error(str(err))
 
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()
+
+main()
