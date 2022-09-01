@@ -8,227 +8,103 @@ It will act as a “BGP FS Lite” implementation for systems not supporting BGP
 based Fretta systems).
 
 
-## Script Installation Process:
+## App Installation Process:
 
-### Build image and save it to a devbox
+### 1. Build an RPM of the app
 
-This is one time operation to retrieve latest version of code. 
+- Build a docker image image: ```docker build -t bgpfs2acl . ```
+- Save the image: ```docker save b7f8277701ab > bgpfs2acl.tar.gz```
+- Create the RPM following the instrucitons on: xr-appmgr-build (https://github.com/ios-xr/xr-appmgr-build) (the ```build.yaml``` needed is included in this repository)
 
-- Clone the repository to any machine (hereafter **devbox**) with **docker** & **git**:
+### 2. Transfer and install the app to a router
 
-    ```
-    git clone https://github.com/ios-xr/bgpfs2acl.git
-    ```
-
-- Go to the directory:
-
-    ```
-    cd bgpfs2acl
-    ```
-
-- Build the image:
-
-    ```
-    docker build -t bgpfs2acl -f docker/Dockerfile-dev .
-    ```
-
-  **bgpfs2acl** is the name of built image
-
-- save image to an archive for further delivery to a router:
-
-    ```
-     docker save bgpfs2acl > bgpfs2acl.tar
-    ```
-
-    Now our image ready! Next step to transfer it to the router(s) via scp/tftp/ftp based on your preferred/available technique. We will cover steps for SCP. 
-
-### 1. Transfer and install the image to a router
-
-- go to a linux shell on a router (need to be configured):
-
-    ```
-    ssh -p 57722 <username>@<router ip>
-    ```
-
-### On the router:
-
-- transfer the repository and the image archive from **devbox** to the router:
-
-    ```bash
-    scp <username>@<devbox-ip>:<path-to-bgpfs2acl-repository> /misc/app_host/
-    ```
-
-- go to the repository
-
-    ```bash
-    cd /misc/app_host/bgpfs2acl
-    ```
-
-- load image from the archive to the docker environment:
-
-```bash
-      docker load < bgpfs2acl.tar
-```
-
-- check, that everything is ok and image was loaded successfully:
-
-```bash
-[ncs5501:~]$ docker images | grep bgpfs2acl
-bgpfs2acl           latest              c9cc7b5ccff7        4 months ago        131.3 MB
-```
-
-### 2. Prepare linux environment
-
-To make possible our tool and IOS XR interconnection, we need to make some steps: 
-
-#### On the router: - in the same repository root directory:
-
-```
-  source prepare_host_environment.sh
-```
-
-- You should see something like:
-
-    ```
-    Checking if user already exist...
-    Creating new user...
-    Enter new UNIX password: 
-    Retype new UNIX password: 
-    passwd: password updated successfully
-    New user created. Username: bgpfs2acl
-    Keypair was created and stored in /home/bgpfs2acl
-    Public key was added to ~/.ssh/authorized_keys.
-    The key was copied to the shared location.
-    ```
-
-After that your router is ready to run the container
-
-### 3. Set the parameters
-
-### On the router:
-
-Before the running, we need to set the parameters like execution frequency, default acl name, syslog parameters  and etc. Inside the repository root you can find a file called **parameters.env.example**. Here you can find all the configurable parameters of our programm. To configure the parameters, you need to follow these steps:
-
-1. Copy the file **parameters.env.example** to **parameters.env** (or you can choose any other name but in that case, you will need to change the running script)
-
-    ```bash
-    cp parameters.env.example parameters.env
-    ```
-
-2. Open that file in any text editor. There you can find all the parameters an commentaries for them. Each parameter has been set to default value. You can change any value on your own if you need it. Here is the short description of all the parameters:
-
-    ```bash
-    #rules checking and updating interval in seconds
-    FS2ACL_UPD_FREQUENCY=30
-
-    #set this parameter to True if you need to remove all the rules applied by the script
-    FS2ACL_REVERT=False 
-
-    #default name of the ACL, which will be used for target interfaces without bounded ACL
-    FS2ACL_DEFAULT_ACL_NAME=bgpfs2acl-ipv4 #
-
-    #the sequence, starting from which all the generated rules will be applied to the targeted ACLs
-    FS2ACL_FS_START_SEQ=100500
-
-    #syslog ip address
-    FS2ACL_SYSLOG_HOST=127.0.0.1
-
-    #syslog port
-    FS2ACL_SYSLOG_PORT=514
-
-    #syslog file
-    FS2ACL_SYSLOG_FILE=None
-
-    #syslog level info
-    FS2ACL_SYSLOG_LOGLEVEL=INFO
-
-    #router host
-    FS2ACL_ROUTER_HOST=127.0.0.1
-
-    #router port
-    FS2ACL_ROUTER_PORT=57722
-
-    #linux user for connection to the router
-    FS2ACL_ROUTER_USER=bgpfs2acl
-
-    #user's password, not needed if using ssh key
-    FS2ACL_ROUTER_PASSWORD=
-    ```
-
-3. In case if you changed the parameters filename you need to change it in the scripts/run_container.sh file. 
-
-After all the parameters changes we are ready to start the programm
-
-### 3. Run the container
-
-### On the router:
-
-- To run container execute the script from the repository:
-
-    ```
-    source run_container.sh
-    ```
-
-    Voila! Bgpfs2acl tool is up! Make some flowspec rules and check changes in access lists and interfaces.
-    After that you can use usual **docker stop** and **docker run** to stop and run the container.
-    
-    You can always check that you container is running: 
+- SCP the rpm to the router:
     
     ```
-    [ncs5501:~]$ docker ps
-    CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS               NAMES
-    59a9927a1733        bgpfs2acl           "/bin/sh -c 'source s"   3 weeks ago         Up 3 weeks                              bgpfs2acl
+    scp bgpfs2acl-1.0.0-eXR_7.3.1.x86_64.rpm <router>:/misc/app_host
     ```
 
-To check the application logs: 
+#### On the router:
+- Install the app using appmanager
+```
+RP/0/RP0/CPU0:IOSXR2-R6#appmgr package install rpm /misc/app_host/bgpfs2acl-1.0.0-eXR_7.3.1.x86_64
+```
+
+- Check that the app was installed successfully:
+
+```bash
+RP/0/RP0/CPU0:IOSXR2-R6#sh appmgr packages installed                           
+Package                                                     
+------------------------------------------------------------    
+bgpfs2acl-1.0.0-eXR_7.3.1.x86_64 
+```
+
+### 3. Open grpc port for communication with app
+
+#### On the router:
 
 ```
-[ncs5501:~]$ docker logs bgpfs2acl
-
-2020-07-17 18:14:53,235 - INFO - Failed to create ACL entry from FS rule: Dest:7.7.7.7/32,Proto:=17,SPort:=123,Length:>=1&<=35|>=37&<=45|>=47&<=75|>=77&<=219|>=221&<=65535. Invalid packet-length: range 221 65535. Passed value 65535 is bigger than maximum permitted 16383
-2020-07-19 14:38:56,548 - WARNING - Flowspec is empty/was not found.
-2020-07-19 14:38:56,549 - WARNING - Removing fs rules from test2 access-list...
-2020-07-19 14:38:56,549 - WARNING - Removing fs rules from test3 access-list...
-2020-07-19 14:38:56,549 - WARNING - Removing fs rules from bgpfs2acl-ipv4 access-list...
-2020-07-20 09:08:27,906 - WARNING - Flowspec is empty/was not found.
-2020-07-20 09:08:27,906 - WARNING - Removing fs rules from test2 access-list...
-2020-07-20 09:08:27,906 - WARNING - Removing fs rules from test3 access-list...
-2020-07-20 09:08:27,906 - WARNING - Removing fs rules from bgpfs2acl-ipv4 access-list...
+grpc
+ port 57777
+ no-tls
+!
 ```
+
+After that your router is ready to run the app
+
+### 4. Start the app
+
+#### On the router:
+In config mode
+```
+appmgr application bgpfs2acl activate type docker source bgpfs2acl docker-run-opts "-itd --network=host" docker-run-cmd "--router-host <host-ip-address> --router-port 57777 --router-user <username> --router-password <password> --syslog-filename /dev/stdout"
+```
+
+The first part: ```appmgr application bgpfs2acl activate type docker source bgpfs2acl docker-run-opts "-itd --network=host"``` specifies that ```bgpfs2acl``` is the app to be started. All of command line arguments are passed in ```docker-run-cmd``` in quotes.
+
+
+Voila! Bgpfs2acl tool is up! Make some flowspec rules and check changes in access lists and interfaces.
+After that you can use usual **docker stop** and **docker run** to stop and run the container.
+
+You can always check that you container is running: 
+    
+ ```
+RP/0/RP0/CPU0:IOSXR2-R6#show appmgr application name bgpfs2acl info summary 
+Wed Aug 31 13:26:00.090 PDT
+Application: bgpfs2acl
+  Type: Docker
+  Source: bgpfs2acl
+  Config State: Activated
+  Container ID: 0cc5f748fb3d90f9409f36a678f74cf69c590fe6de154a52b468008a08369843
+  Image: bgpfs2acl:latest
+  Command: "python3 -m bgpfs2acl --router-host 10.30.110.6 --router-port 57777 --router-user cisco --router-password cisco123 --syslog-loglevel DEBUG --syslog-filename /dev/stdout"
+  Status: Up 43 seconds
+  ```
+
+To check the resource utilisation: 
+
+```
+RP/0/RP0/CPU0:IOSXR2-R6#show appmgr application name bgpfs2acl stats        
+Wed Aug 31 13:26:13.871 PDT
+Application Stats: bgpfs2acl
+   CPU Percentage: 0.01%
+   Memory Usage: 19.3MiB / 30.88GiB
+   Memory Percentage: 0.06%
+   Network IO: 0B / 0B
+   Block IO: 0B / 0B
+   PIDs: 0
+```
+
+The logs will be integrated and viewed with ```show logging```. For application specific logs, use ```show appmgr application name bgpfs2acl logs```
 
 For default FlowSpec configurations samples please check the folder dev_configs. 
 Macrocarpa acts as a FlowSpec client and Red_Pine announcing the FlowSpec rules.
 
-## Script relies on iosxr-ztp-python
+## Script relies on iosxr-grpc-python
 
-[Github for iosxr-ztp-python](https://github.com/ios-xr/iosxr-ztp-python)
+[Github for iosxr-grpc-python](https://github.com/cisco-ie/ios-xr-grpc-python)
 
-The ZtpHelpers class is implemented in ztp_helpers.py script.
- In this github repository you will find the library itself in the /lib directory.
-  This library is available on the router by default starting IOS-XR 6.2.2. This file will
-   exist at the location: /pkg/bin/ztp_helper.py on your router.
-
-The python library is provided in the github repository to help a user easily understand 
-the structure of the library and then inherit in the user side ztp script.
-
-## Information retrieval 
-
-To retrieve information call xrcmd used on a box.  
-ACL with following name created on the device *ipv4 access-list bgpfs2acl-ipv4*  This is default name and could be 
-changed with key "-n"
-
-
-### Supported fields
-
-- Protocol
-- SourceIP
-- SourcePort
-- DestIP
-- DestPort
-
-More to be added;
-Packet length first one. 
-
+The iosxr-grpc is a library with methods that are available to use over gRPC with IOS-XR boxes after 6.0.0. The API has several methods which allows a user to send simple RPC commands such as ```get``` and ```push``` using YANG and JSON.
 
 ## BGP Flowspec Configuration example
  

@@ -1,0 +1,9 @@
+packages:
+- name: "bgpfs"
+  release: "eXR_7.3.1"
+  version: "1.0.0"
+  sources:
+    - name: bgpfs2acl
+      file: bgpfs/bgpfs2acl.tar.gz
+  copy_hostname: true
+  copy_ems_cert: false

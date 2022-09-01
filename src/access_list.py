@@ -81,7 +81,7 @@ FLOWSPEC_START_REMARK = "FLOWSPEC RULES BEGIN. Do not add statements below this.
 FLOWSPEC_END_REMARK = "FLOWSPEC RULES END"
 
 
-class ACLValidationError(StandardError):
+class ACLValidationError(BaseException):
     pass
 
 
@@ -95,7 +95,7 @@ class AccessListEntry:
 
     def __init__(self, command, protocol=None, source_ip=None, source_port=None, destination_ip=None,
                  destination_port=None, icmp_type=None, icmp_code=None, packet_length=None, fragments=False,
-                 nexthop_ip=None, commentary=None):
+                 nexthop_ip=None, nexthop_vrf=None, commentary=None):
         if command not in [c.value for c in AccessListEntry.Command.__members__.values()]:
             raise ACLValidationError('Passed wrong ACL command: {}'.format(command))
         self._command = command
@@ -125,8 +125,26 @@ class AccessListEntry:
         self._packet_length = self._validate_packet_length(packet_length)
 
         self._fragments = self._validate_fragments(fragments)
+        
+        if nexthop_ip:
+            self._nexthop = self._validate_nexthop_ip(nexthop_ip)
 
-        self._nexthop_ip = self._validate_nexthop_ip(nexthop_ip)
+        # Special case for redirect to vrf
+        elif nexthop_vrf:
+            self._nexthop = self._validate_nexthop_vrf(nexthop_vrf)
+        else:
+            self._nexthop = None
+
+    def _validate_nexthop_vrf(self, nexthop_vrf):
+        if not nexthop_vrf:
+            return None
+
+        if self._command != AccessListEntry.Command.permit.value:
+            raise ACLValidationError(
+                "Wrong command: {}. Nexthop can be used only with permit acl command.".format(self._command))
+        
+        nexthop_vrf = 'nexthop1 vrf {}'.format(nexthop_vrf)
+        return nexthop_vrf
 
     def _validate_nexthop_ip(self, nexthop_ip):
         if not nexthop_ip:
@@ -149,7 +167,7 @@ class AccessListEntry:
 
         features = [self._command, self._protocol, self._source_ip, self._source_port, self._destination_ip,
                     self._destination_port, self._icmp_type, self._icmp_code, self._packet_length, self._fragments,
-                    self._nexthop_ip]  # order is important
+                    self._nexthop]  # order is important
 
         features = [str(i) for i in features if i is not None]  # removed all empty fields
 
@@ -325,13 +343,18 @@ class AccessListEntry:
                 errors.update({key: str(err)})
 
         try:
-            init_args['command'], init_args['nexthop_ip'] = AccessListEntry._parse_flowspec_action(
+            contains_vrf, command, nexthop = AccessListEntry._parse_flowspec_action(
                 flowspec_rule.actions)
+            init_args['command'] = command
+            if contains_vrf:
+                init_args['nexthop_vrf'] = nexthop
+            else:
+                init_args['nexthop_ip'] = nexthop
         except ACLValidationError as err:
             errors.update({'action': str(err)})
 
         if errors:
-            errors = ';'.join(('{}: {}'.format(key, value) for key, value in errors.iteritems()))
+            errors = ';'.join(('{}: {}'.format(key, value) for key, value in errors.items()))
             logger.info("Failed to convert flow: {}. Errors: {}".format(flowspec_rule.flow, errors))
             return []
 
@@ -349,15 +372,19 @@ class AccessListEntry:
 
     @staticmethod
     def _parse_flowspec_action(action):
+        contains_vrf = False
         if action.startswith(FlowSpecRule.Actions.deny.value):
-            return AccessListEntry.Command.deny.value, None
+            return contains_vrf, AccessListEntry.Command.deny.value, None
         elif action.startswith(FlowSpecRule.Actions.nexthop.value):
             nexthop_ip = action.split(' ')[1]
             try:
                 socket.inet_aton(nexthop_ip)
             except socket.error:
                 raise ACLValidationError("Unsupported nexthop format: {}".format(nexthop_ip))
-            return AccessListEntry.Command.permit.value, nexthop_ip
+            return contains_vrf, AccessListEntry.Command.permit.value, nexthop_ip
+        elif action.startswith(FlowSpecRule.Actions.redirect_vrf.value):
+            contains_vrf = True
+            return contains_vrf, AccessListEntry.Command.permit.value, action.split(' ')[2]
         raise ACLValidationError("Usupported action: {}".format(action))
 
     @staticmethod
@@ -586,7 +613,7 @@ class AccessList:
         acl_name_pat = re.compile(r'ipv4 access-list ([^\s]{1,64})')
         acls = []
         cur_acl = None
-        for line in raw_config_list:
+        for line in raw_config_list.split('\n'):
             acl_title = acl_name_pat.match(line)
             if acl_title:
                 cur_acl = cls(acl_title.group(1))
@@ -594,7 +621,7 @@ class AccessList:
                 acls.append(cur_acl)
                 cur_acl = None
             elif cur_acl is not None:
-                seq, statement = line.split(' ', 1)
+                seq, statement = line.strip().split(' ', 1)
                 seq = int(seq)
                 if FLOWSPEC_START_REMARK in statement and cur_acl._fs_start is None:
                     cur_acl._fs_start = seq
