@@ -116,7 +116,7 @@ class BgpFs2AclTool:
                  raise Exception(response.errors)          
     
 def run(bgpfs2acl_tool):
-    threading.Timer(app_config.upd_frequency, run, [bgpfs2acl_tool]).start()
+    # threading.Timer(app_config.upd_frequency, run, [bgpfs2acl_tool]).start()
     logger.debug("start run")
     to_apply = ''
     flowspec = bgpfs2acl_tool.get_flowspec()
