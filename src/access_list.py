@@ -622,6 +622,9 @@ class AccessList:
                 cur_acl = None
             elif cur_acl is not None:
                 seq, statement = line.strip().split(' ', 1)
+                if seq == '!':
+                    import pdb;pdb.set_trace()
+                    breakpoint()
                 seq = int(seq)
                 if FLOWSPEC_START_REMARK in statement and cur_acl._fs_start is None:
                     cur_acl._fs_start = seq
